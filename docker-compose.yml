@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:13
+    container_name: airflow_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+
+  airflow-init: 
+    image: apache/airflow:2.8.1 
+    container_name: airflow_init 
+    depends_on: 
+      - postgres 
+    environment: 
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor 
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow 
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false" 
+      PYTHONPATH: /opt/airflow/source 
+      _PIP_ADDITIONAL_REQUIREMENTS: pyspark 
+    volumes: 
+      - ./.env:/opt/airflow/.env
+      - ./source:/opt/airflow/source 
+      - ./source/dataops:/opt/airflow/dags 
+      - ./data:/opt/airflow/data 
+    command: > 
+      bash -c "airflow db migrate && airflow users create --username airflow --password airflow --firstname Airflow --lastname Admin --role Admin --email airflow@example.com"
+
+  airflow-webserver:
+    image: apache/airflow:2.8.1
+    container_name: airflow_webserver
+    depends_on:
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      PYTHONPATH: /opt/airflow/source
+      _PIP_ADDITIONAL_REQUIREMENTS: pyspark
+    volumes:
+      - ./.env:/opt/airflow/.env
+      - ./source:/opt/airflow/source
+      - ./source/dataops:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: webserver
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.1
+    container_name: airflow_scheduler
+    depends_on:
+      - airflow-webserver
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      PYTHONPATH: /opt/airflow/source
+      _PIP_ADDITIONAL_REQUIREMENTS: pyspark
+    volumes:
+      - ./.env:/opt/airflow/.env
+      - ./source:/opt/airflow/source
+      - ./source/dataops:/opt/airflow/dags
+      - ./data:/opt/airflow/data
+    command: scheduler
+
+volumes:
+  postgres-db-volume:
