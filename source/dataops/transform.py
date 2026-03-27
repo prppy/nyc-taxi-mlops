@@ -60,8 +60,5 @@ def transform_fact(**context):
 def transform_dim_zone(**context):
     pass
 
-def transform_dim_time(**context):
-    pass
-
 def transform_dim_weather(**context):
     pass

@@ -3,7 +3,7 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime
 
 from dataops.extract import extract_taxi, extract_weather, extract_lookup
-from dataops.transform import transform_fact, transform_dim_zone, transform_dim_time, transform_dim_weather
+from dataops.transform import transform_fact, transform_dim_zone, transform_dim_weather
 from dataops.load import load_data
 from dataops.validate import validate_raw, validate_processed
 from dataops.lineage import update_lineage
@@ -54,11 +54,6 @@ with DAG(
         python_callable=transform_dim_zone
     )   
     
-    transform_dim_time_task = PythonOperator(
-        task_id="transform_dim_time",
-        python_callable=transform_dim_time
-    )
-    
     transform_dim_weather_task = PythonOperator(
         task_id="transform_dim_weather",
         python_callable=transform_dim_weather
@@ -89,13 +84,11 @@ with DAG(
     validate_raw_task >> [
         transform_fact_task,
         transform_dim_zone_task,
-        transform_dim_time_task,
         transform_dim_weather_task
     ]
     [
         transform_fact_task,
         transform_dim_zone_task,
-        transform_dim_time_task,
         transform_dim_weather_task
     ] >> validate_processed_task
     validate_processed_task >> load_task
