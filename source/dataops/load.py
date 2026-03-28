@@ -27,17 +27,18 @@ def load_data(**context):
         .config("spark.executor.extraJavaOptions", "-Djava.net.preferIPv4Stack=true") \
         .getOrCreate()
 
-    print(f"Loading data for {year}-{month:02d}")
+    logger.info(f"Starting load for {year}-{month:02d}")
 
     month_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
 
     if not os.path.exists(month_path):
-        print(f"No processed data found at {month_path}")
+        logger.warning(f"No processed fact_trips data found at {month_path}")
         return
 
     df = spark.read.parquet(month_path)
 
-    print(f"Loaded Spark DF with {df.count()} rows")
+    row_count = df.count()
+    logger.info(f"Loaded fact_trips Spark DF with {row_count} rows")
 
     jdbc_url = f"jdbc:postgresql://{engine.url.host}:{engine.url.port}/{engine.url.database}"
     
@@ -54,7 +55,32 @@ def load_data(**context):
         .option("driver", "org.postgresql.Driver") \
         .mode("append") \
         .save()
+    
+    logger.info("fact_trips appended to Supabase successfully")
 
-    print("Data appended to Supabase successfully")
+    # load weather data in dim_weather
+    weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
+
+    if not os.path.exists(weather_path):
+        logger.warning(f"No processed dim_weather data found at {weather_path}")
+    else:
+        weather_df = spark.read.parquet(weather_path)
+
+        weather_count = weather_df.count()
+        logger.info(f"Loaded dim_weather Spark DF with {weather_count} rows")
+
+        weather_df.write \
+            .format("jdbc") \
+            .option("url", jdbc_url) \
+            .option("dbtable", "dim_weather") \
+            .option("user", engine.url.username) \
+            .option("password", engine.url.password) \
+            .option("driver", "org.postgresql.Driver") \
+            .mode("append") \
+            .save()
+
+        logger.info("dim_weather appended to Supabase successfully")
+
+    logger.info(f"Load completed for {year}-{month:02d}")
     spark.stop()
     

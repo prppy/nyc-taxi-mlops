@@ -1,6 +1,7 @@
 import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, coalesce, lit, when
+from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 from utils.config import PROCESSED_PATH, get_raw_file_path
 from utils.monitoring import monitor
 
@@ -73,7 +74,7 @@ def transform_fact(**context):
     # standardise each dataset before union
     standardised_dfs = []
     for df in dfs:
-        taxi_type = df.schema["taxi_type"]
+        taxi_type = df.select("taxi_type").first()[0]
 
         rename_map = {
             "VendorID": "vendor_id",
@@ -150,8 +151,46 @@ def transform_fact(**context):
             .when(col(c) == "N", False)
             .otherwise(None)
         )
+    
+    # typecasting
+    combined = combined \
+    .withColumn("pickup_datetime", col("pickup_datetime").cast(TimestampType())) \
+    .withColumn("dropoff_datetime", col("dropoff_datetime").cast(TimestampType())) \
+    .withColumn("pulocationid", col("pulocationid").cast(IntegerType())) \
+    .withColumn("dolocationid", col("dolocationid").cast(IntegerType())) \
+    .withColumn("trip_distance", col("trip_distance").cast(DoubleType())) \
+    .withColumn("fare_amount", col("fare_amount").cast(DoubleType())) \
+    .withColumn("total_amount", col("total_amount").cast(DoubleType())) \
+    .withColumn("passenger_count", col("passenger_count").cast(IntegerType())) \
+    .withColumn("taxi_type", col("taxi_type").cast(StringType())) \
+    .withColumn("vendor_id", col("vendor_id").cast(LongType())) \
+    .withColumn("hvfhs_license_num", col("hvfhs_license_num").cast(StringType())) \
+    .withColumn("dispatching_base_num", col("dispatching_base_num").cast(StringType())) \
+    .withColumn("originating_base_num", col("originating_base_num").cast(StringType())) \
+    .withColumn("ratecode_id", col("ratecode_id").cast(StringType())) \
+    .withColumn("payment_type", col("payment_type").cast(StringType())) \
+    .withColumn("request_datetime", col("request_datetime").cast(TimestampType())) \
+    .withColumn("on_scene_datetime", col("on_scene_datetime").cast(TimestampType())) \
+    .withColumn("trip_time", col("trip_time").cast(LongType())) \
+    .withColumn("extra", col("extra").cast(DoubleType())) \
+    .withColumn("mta_tax", col("mta_tax").cast(DoubleType())) \
+    .withColumn("improvement_surcharge", col("improvement_surcharge").cast(DoubleType())) \
+    .withColumn("tip_amount", col("tip_amount").cast(DoubleType())) \
+    .withColumn("tolls_amount", col("tolls_amount").cast(DoubleType())) \
+    .withColumn("driver_pay", col("driver_pay").cast(DoubleType())) \
+    .withColumn("congestion_surcharge", col("congestion_surcharge").cast(DoubleType())) \
+    .withColumn("airport_fee", col("airport_fee").cast(DoubleType())) \
+    .withColumn("cbd_congestion_fee", col("cbd_congestion_fee").cast(DoubleType())) \
+    .withColumn("bcf", col("bcf").cast(DoubleType())) \
+    .withColumn("sales_tax", col("sales_tax").cast(DoubleType())) \
+    .withColumn("shared_request_flag", col("shared_request_flag").cast(BooleanType())) \
+    .withColumn("shared_match_flag", col("shared_match_flag").cast(BooleanType())) \
+    .withColumn("wav_request_flag", col("wav_request_flag").cast(BooleanType())) \
+    .withColumn("wav_match_flag", col("wav_match_flag").cast(BooleanType())) \
+    .withColumn("access_a_ride_flag", col("access_a_ride_flag").cast(BooleanType())) \
+    .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
 
-    # Write to trip fact table
+    # write to trip fact table
     combined = combined.withColumn("year", lit(year))
     combined = combined.withColumn("month", lit(month))
     combined = combined.repartition(8)
@@ -168,4 +207,35 @@ def transform_dim_zone(**context):
 
 @monitor
 def transform_dim_weather(**context):
-    pass
+    execution_date = context["execution_date"]
+    year = execution_date.year
+    month = execution_date.month
+
+    spark = SparkSession.builder.appName("Weather Transform").getOrCreate()
+
+    print(f"Transforming weather for {year}-{month:02d}")
+
+    input_path = f"data/raw/weather/{year}-{month:02d}.csv"
+
+    if not os.path.exists(input_path):
+        print(f"No weather data found for {year}-{month:02d}")
+        return
+
+    df = spark.read.csv(input_path, header=True)
+
+    # typecasting
+    df = df \
+        .withColumn("date", col("date").cast(DateType())) \
+        .withColumn("temperature_mean", col("temperature_mean").cast(DoubleType())) \
+        .withColumn("precipitation_sum", col("precipitation_sum").cast(DoubleType())) \
+        .withColumn("wind_speed_max", col("wind_speed_max").cast(DoubleType())) \
+        .withColumn("borough", col("borough"))
+    
+    df = df.dropDuplicates(["date", "borough"])
+
+    # write to dim_weather table
+    output_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
+    df.write.mode("overwrite").parquet(output_path)
+
+    print("dim_weather written successfully")
+    spark.stop()
