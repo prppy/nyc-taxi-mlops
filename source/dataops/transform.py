@@ -2,7 +2,9 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, coalesce, lit
 from utils.config import PROCESSED_PATH, get_raw_file_path
+from utils.monitoring import monitor
 
+@monitor
 def transform_fact(**context):
     execution_date = context["execution_date"]
     year = execution_date.year
@@ -118,9 +120,11 @@ def transform_fact(**context):
 
     print("Fact table appended successfully")
     spark.stop()
-    
+
+@monitor 
 def transform_dim_zone(**context):
     pass
 
+@monitor
 def transform_dim_weather(**context):
     pass
