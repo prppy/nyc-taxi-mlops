@@ -36,6 +36,8 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -59,6 +61,8 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
