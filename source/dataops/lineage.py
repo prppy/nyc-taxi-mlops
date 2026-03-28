@@ -1,6 +1,8 @@
 import json
 from datetime import datetime
+from utils.monitoring import monitor
 
+@monitor
 def update_lineage(input_path, output_path):
     pass
     # lineage = {

@@ -2,7 +2,9 @@ import os
 from pyspark.sql import SparkSession
 from utils.config import PROCESSED_PATH
 from utils.db import engine
+from utils.monitoring import monitor
 
+@monitor
 def load_data(**context):
     execution_date = context["execution_date"]
     year = execution_date.year
