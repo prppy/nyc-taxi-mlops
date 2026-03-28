@@ -7,7 +7,7 @@ NYCTAXI_URL = "https://d37ci6vzurychx.cloudfront.net"
 
 DATASETS = {
     "yellow": "yellow_tripdata",
-    "hvfhs": "fhvhv_tripdata"
+    "fhvhv": "fhvhv_tripdata"
 }
 
 TAXI_TYPES = list(DATASETS.keys())
@@ -39,14 +39,14 @@ ZONE_LOOKUP_FILE = f"{RAW_PATH}taxi_zone_lookup.csv"
 # airflow dag configs
 DAG_ID = "taxi_data_pipeline"
 SCHEDULE_INTERVAL = "@monthly"   # or "@daily"
-RETRY_COUNT = 2
+RETRY_COUNT = 0
 
 # logging
 LOG_LEVEL = "INFO"
 
 # helpers
 def get_raw_file_path(dataset, year, month):
-    return f"{RAW_PATH}/taxi/{dataset}_tripdata_{year}-{month:02d}.parquet"
+    return f"{RAW_PATH}taxi/{dataset}_tripdata_{year}-{month:02d}.parquet"
 
 def get_processed_fact_path():
     return f"{PROCESSED_PATH}fact_demand/"

@@ -3,3 +3,5 @@ __pycache__/
 .venv/
 *.parquet
 *.csv
+
+data/processed/fact_trips/

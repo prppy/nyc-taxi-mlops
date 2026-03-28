@@ -10,7 +10,7 @@ services:
       - postgres-db-volume:/var/lib/postgresql/data
 
   airflow-init: 
-    image: apache/airflow:2.8.1 
+    build: .
     container_name: airflow_init 
     depends_on: 
       - postgres 
@@ -18,27 +18,32 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor 
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow 
       AIRFLOW__CORE__LOAD_EXAMPLES: "false" 
-      PYTHONPATH: /opt/airflow/source 
-      _PIP_ADDITIONAL_REQUIREMENTS: pyspark 
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      PYTHONPATH: /opt/airflow/source
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
     volumes: 
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source 
       - ./source/dataops:/opt/airflow/dags 
       - ./data:/opt/airflow/data 
     command: > 
-      bash -c "airflow db migrate && airflow users create --username airflow --password airflow --firstname Airflow --lastname Admin --role Admin --email airflow@example.com"
+      bash -c "airflow db init && airflow users create --username airflow --password airflow --firstname Airflow --lastname Admin --role Admin --email airflow@example.com"
 
   airflow-webserver:
-    image: apache/airflow:2.8.1
+    build: .
     container_name: airflow_webserver
     depends_on:
-      - postgres
+      airflow-init:
+        condition: service_completed_successfully
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       PYTHONPATH: /opt/airflow/source
-      _PIP_ADDITIONAL_REQUIREMENTS: pyspark
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
@@ -49,16 +54,19 @@ services:
     command: webserver
 
   airflow-scheduler:
-    image: apache/airflow:2.8.1
+    build: .
     container_name: airflow_scheduler
     depends_on:
-      - airflow-webserver
+      airflow-init:
+        condition: service_completed_successfully
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       PYTHONPATH: /opt/airflow/source
-      _PIP_ADDITIONAL_REQUIREMENTS: pyspark
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source

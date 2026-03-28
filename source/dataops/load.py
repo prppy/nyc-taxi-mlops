@@ -4,13 +4,17 @@ from utils.config import PROCESSED_PATH
 from utils.db import engine
 
 def load_data(**context):
-    spark = SparkSession.builder \
-        .appName("Taxi ETL Load") \
-        .getOrCreate()
-
     execution_date = context["execution_date"]
     year = execution_date.year
     month = execution_date.month
+    
+    spark = SparkSession.builder \
+        .appName("Taxi ETL Load") \
+        .config(
+            "spark.jars.packages",
+            "org.postgresql:postgresql:42.7.3"
+        ) \
+        .getOrCreate()
 
     print(f"Loading data for {year}-{month:02d}")
 
@@ -24,14 +28,18 @@ def load_data(**context):
 
     print(f"Loaded Spark DF with {df.count()} rows")
 
-    pdf = df.toPandas()
-    pdf.to_sql(
-        "fact_trips",
-        engine,
-        if_exists="append",
-        index=False,
-        chunksize=5000
-    )
+    jdbc_url = f"jdbc:postgresql://{engine.url.host}:{engine.url.port}/{engine.url.database}"
+    
+    df.write \
+        .format("jdbc") \
+        .option("url", jdbc_url) \
+        .option("dbtable", "fact_trips") \
+        .option("user", engine.url.username) \
+        .option("password", engine.url.password) \
+        .option("driver", "org.postgresql.Driver") \
+        .mode("append") \
+        .save()
 
     print("Data appended to Supabase successfully")
     spark.stop()
+    
