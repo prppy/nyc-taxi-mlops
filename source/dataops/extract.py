@@ -9,7 +9,9 @@ from utils.config import (
     RAW_PATH,
     get_raw_file_path
 )
+from utils.monitoring import monitor
 
+@monitor
 def download_file(url, output_path):
     try:
         response = requests.get(url, stream=True)
@@ -22,10 +24,13 @@ def download_file(url, output_path):
             print(f"Downloaded: {output_path}")
         else:
             print(f"Failed ({response.status_code}): {url}")
+            raise Exception(f"HTTP {response.status_code}: {url}")
 
     except Exception as e:
         print(f"Error downloading {url}: {e}")
+        raise
 
+@monitor
 def extract_taxi(**context):
     execution_date = context["execution_date"]
     year = execution_date.year
@@ -45,7 +50,8 @@ def extract_taxi(**context):
 
         print(f"Downloading {url}")
         download_file(url, output_path)
-        
+
+@monitor     
 def extract_weather(**context):
     execution_date = context["execution_date"]
     year = execution_date.year
@@ -118,6 +124,7 @@ def extract_weather(**context):
 
     print(f"Saved combined weather file: {output_path}")
 
+@monitor
 def extract_lookup(**context):
     execution_date = context["execution_date"]
     year = execution_date.year

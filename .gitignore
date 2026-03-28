@@ -4,4 +4,5 @@ __pycache__/
 *.parquet
 *.csv
 
+.DS_Store
 data/processed/fact_trips/
