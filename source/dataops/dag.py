@@ -9,6 +9,7 @@ from dataops.validate import validate_raw, validate_processed
 from dataops.lineage import update_lineage
 from dataops.watermark import update_watermark
 from dataops.setup_db import setup_tables
+from dataops.report import report_data
 
 from utils.alerting import on_failure_alert
 from utils.config import (DAG_ID, SCHEDULE_INTERVAL, RETRY_COUNT)
@@ -79,6 +80,11 @@ with DAG(
         python_callable=load_data
     )
 
+    report_task = PythonOperator(
+        task_id="report_data",
+        python_callable=report_data,
+    )
+
     lineage_task = PythonOperator(
         task_id="lineage",
         python_callable=update_lineage
@@ -94,4 +100,4 @@ with DAG(
 
     setup_task >> [extract_taxi_task, extract_weather_task, extract_lookup_task] >> validate_raw_task
     validate_raw_task >> transform_tasks >> validate_processed_task 
-    validate_processed_task >> load_task >> lineage_task >> watermark_task
+    validate_processed_task >> load_task >> report_task >> lineage_task >> watermark_task
