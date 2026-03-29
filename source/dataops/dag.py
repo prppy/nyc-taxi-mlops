@@ -8,6 +8,7 @@ from dataops.load import load_data
 from dataops.validate import validate_raw, validate_processed
 from dataops.lineage import update_lineage
 from dataops.watermark import update_watermark
+from dataops.setup_db import setup_tables
 
 from utils.alerting import on_failure_alert
 from utils.config import (DAG_ID, SCHEDULE_INTERVAL, RETRY_COUNT)
@@ -27,6 +28,11 @@ with DAG(
     catchup=False,
     on_failure_callback=on_failure_alert, 
 ) as dag:
+    
+    setup_task = PythonOperator(
+        task_id="setup_tables",
+        python_callable=setup_tables
+    )
 
     extract_taxi_task = PythonOperator(
         task_id="extract_taxi",
@@ -84,16 +90,8 @@ with DAG(
     )
 
     # DAG dependencies
-    [extract_taxi_task, extract_weather_task, extract_lookup_task] >> validate_raw_task
-    validate_raw_task >> [
-        transform_fact_task,
-        transform_dim_zone_task,
-        transform_dim_weather_task
-    ]
-    [
-        transform_fact_task,
-        transform_dim_zone_task,
-        transform_dim_weather_task
-    ] >> validate_processed_task
-    validate_processed_task >> load_task
-    load_task >> lineage_task >> watermark_task
+    transform_tasks = [transform_fact_task, transform_dim_zone_task, transform_dim_weather_task]
+
+    setup_task >> [extract_taxi_task, extract_weather_task, extract_lookup_task] >> validate_raw_task
+    validate_raw_task >> transform_tasks >> validate_processed_task 
+    validate_processed_task >> load_task >> lineage_task >> watermark_task
