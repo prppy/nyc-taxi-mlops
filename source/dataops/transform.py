@@ -94,11 +94,16 @@ def transform_fact(**context):
         for old, new in rename_map.items():
             if old in df.columns:
                 df = df.withColumnRenamed(old, new)
+                
 
         # parquet file had naming issues..
         if "congestion_surchage" in df.columns:
             df = df.withColumnRenamed("congestion_surchage", "congestion_surcharge")
 
+        # fill all missing standard columns with None FIRST
+        for col_name in STANDARD_TRIP_FACT_COLUMNS:
+            if col_name not in df.columns:
+                df = df.withColumn(col_name, lit(None))
         # unify datetime columns
         if taxi_type == "yellow":
             if "tpep_pickup_datetime" in df.columns:
