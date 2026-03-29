@@ -1,8 +1,12 @@
 import io
 import base64
 import logging
+import smtplib
 import pandas as pd
 
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from typing import List
 
 from utils.db import engine
@@ -76,10 +80,10 @@ def _style_axes(ax, title):
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
 
 
-def _numeric_dist_chart(df: pd.DataFrame, columns: List[str], title: str) -> str:
+def _numeric_dist_chart(df: pd.DataFrame, columns: List[str], title: str) -> bytes:
     """
     Grid of histograms — one subplot per numeric column.
-    Returns base64 PNG.
+    Returns PNG bytes.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -87,7 +91,7 @@ def _numeric_dist_chart(df: pd.DataFrame, columns: List[str], title: str) -> str
  
     cols_present = [c for c in columns if c in df.columns]
     if not cols_present:
-        return ""
+        return b""
 
     n = len(cols_present)
     ncols = min(HIST_GRID_MAX_COLS, n)
@@ -110,20 +114,20 @@ def _numeric_dist_chart(df: pd.DataFrame, columns: List[str], title: str) -> str
 
     fig.suptitle(title, fontsize=11, fontweight="bold", y=1.01)
     fig.tight_layout()
-    return _fig_to_b64(fig)
+    return _fig_to_bytes(fig)
 
 
-def _categorical_bar_chart(df: pd.DataFrame, column: str) -> str:
+def _categorical_bar_chart(df: pd.DataFrame, column: str) -> bytes:
     """
     Horizontal bar chart for a categorical column's value counts.
-    Returns base64 PNG.
+    Returns PNG bytes.
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
  
     if column not in df.columns:
-        return ""
+        return b""
 
     vc = df[column].value_counts().head(CAT_BAR_MAX_CATEGORIES)
     fig, ax = plt.subplots(figsize=(5, max(2.5, 0.4 * len(vc))))
@@ -131,7 +135,7 @@ def _categorical_bar_chart(df: pd.DataFrame, column: str) -> str:
     _style_axes(ax, column)
     ax.set_xlabel("trips", fontsize=7)
     fig.tight_layout()
-    return _fig_to_b64(fig)
+    return _fig_to_bytes(fig)
 
 
 def _stats_html(df: pd.DataFrame, columns: List[str]) -> str:
@@ -165,11 +169,6 @@ def _stats_html(df: pd.DataFrame, columns: List[str]) -> str:
     """
 
 
-def _img_tag(b64: str) -> str:
-    if not b64:
-        return ""
-    return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;margin:8px 0"/>'
-
 def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
     """Returns {filename: png_bytes} for all report charts."""
     charts = {}
@@ -202,7 +201,8 @@ def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
 
     return charts
 
-# task helpres
+
+# task helpers
 
 def _anomaly_flags(df: pd.DataFrame) -> List[str]:
     """
@@ -245,7 +245,7 @@ def _anomaly_flags(df: pd.DataFrame) -> List[str]:
     return flags
 
 
-# data loaders 
+# data loaders
 
 # joining columns for a targeted SELECT instead of SELECT * (more efficient!)
 FACT_COLUMNS = list(set(
@@ -298,58 +298,39 @@ def load_weather(period: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-# email section builders 
+# email section builders
 
 def _build_fact_section(fact_df: pd.DataFrame) -> str:
-    """Stats table + numeric histograms + categorical bar charts for fact_trips."""
-    stats_html    = _stats_html(fact_df, FACT_NUMERIC)
-    num_chart     = _numeric_dist_chart(fact_df, FACT_NUMERIC, "Fact trips — numeric distributions")
-
-    cat_charts = ""
-    for col in FACT_CATEGORICAL:
-        b64 = _categorical_bar_chart(fact_df, col)
-        if b64:
-            cat_charts += f"<h4>{col}</h4>{_img_tag(b64)}"
+    """Stats table for fact_trips — charts are sent as attachments."""
+    stats_html = _stats_html(fact_df, FACT_NUMERIC)
 
     return f"""
       <h3>Fact trips — descriptive statistics</h3>
       {stats_html}
-      {_img_tag(num_chart)}
       <h3>Categorical distributions</h3>
-      {cat_charts}
+      <p style="color:#666;font-size:12px">See attached: categorical_*.png</p>
     """
 
 
 def _build_null_section(fact_df: pd.DataFrame) -> str:
-    """Horizontal bar chart of null rates across all fact_trips columns."""
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as mticker
-    
+    """Null rate summary — chart is sent as attachment."""
     nonzero_null = fact_df.isnull().mean().sort_values(ascending=False)
     nonzero_null = nonzero_null[nonzero_null > 0]
 
     if nonzero_null.empty:
         return "<h3>Null rates</h3><p>No nulls found.</p>"
 
-    fig, ax = plt.subplots(figsize=(7, max(2.5, 0.35 * len(nonzero_null))))
-    ax.barh(nonzero_null.index[::-1], nonzero_null.values[::-1], color=NULL_BAR_COLOR, height=0.6)
-    _style_axes(ax, "Null rate by column (fact_trips sample)")
-    ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1))
-    ax.set_xlabel("null %", fontsize=7)
-    fig.tight_layout()
-
-    return f"<h3>Null rates</h3>{_img_tag(_fig_to_b64(fig))}"
+    return "<h3>Null rates</h3><p style=\"color:#666;font-size:12px\">See attached: null_rates.png</p>"
 
 
 def _build_weather_section(weather_df: pd.DataFrame) -> str:
-    """Stats table + numeric histograms for dim_weather."""
+    """Stats table for dim_weather — chart is sent as attachment."""
     stats_html = _stats_html(weather_df, WEATHER_NUMERIC)
-    chart      = _numeric_dist_chart(weather_df, WEATHER_NUMERIC, "Weather — numeric distributions")
 
     return f"""
       <h3>Weather — descriptive statistics</h3>
       {stats_html}
-      {_img_tag(chart)}
+      <p style="color:#666;font-size:12px">See attached: weather_distributions.png</p>
     """
 
 
@@ -393,9 +374,13 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
     </div>
     """
 
+
 # email sending
+
 def _send_email_with_charts(subject: str, html_body: str, images: dict):
-    """charts: {filename: png_bytes}"""
+    """Send email with chart images as PNG attachments.
+    images: {filename: png_bytes}
+    """
     from airflow.models import Variable
 
     from_addr = "bt4301groupeight@gmail.com"
@@ -408,8 +393,8 @@ def _send_email_with_charts(subject: str, html_body: str, images: dict):
     msg["To"]      = ", ".join(to_list)
     msg.attach(MIMEText(html_body, "html"))
 
-    for filename, png_bytes in charts.items():
-        img = MIMEImage(png_bytes, name=filename)  #
+    for filename, png_bytes in images.items():
+        img = MIMEImage(png_bytes, name=filename)
         img.add_header("Content-Disposition", "attachment", filename=filename)
         msg.attach(img)
 
@@ -418,8 +403,7 @@ def _send_email_with_charts(subject: str, html_body: str, images: dict):
         server.sendmail(from_addr, to_list, msg.as_string())
 
 
-
-# main task 
+# main task
 
 @monitor
 def report_data(**context):
@@ -435,6 +419,7 @@ def report_data(**context):
     logger.info(f"Sampled {len(fact_df):,} fact_trips rows, {len(weather_df):,} weather rows")
 
     flags   = _anomaly_flags(fact_df)
+    charts  = _collect_charts(fact_df, weather_df)
     body    = _build_email_body(period, len(fact_df), len(weather_df), flags, fact_df, weather_df)
     subject = f"[DataOps] Quality Report — {period}" + (" ⚠ ANOMALIES DETECTED" if flags else " ✔ Clean")
 
