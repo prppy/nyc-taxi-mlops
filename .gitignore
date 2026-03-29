@@ -7,5 +7,7 @@ __pycache__/
 *.crc
 _SUCCESS
 .DS_Store
+
 data/processed/fact_trips/
+jars/*.jar
 

@@ -123,7 +123,7 @@ def load_data(**context):
         chunksize=1000,
         method="multi"
     )
-    logger.info("fact_trips appended to Supabase successfully")
+    logger.info("fact_trips appended to Postgres Database successfully")
 
     # load dim_weather
     weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
@@ -138,9 +138,9 @@ def load_data(**context):
             engine,
             if_exists="append",
             index=False,
-            chunksize=1000,
+            chunksize=5000,
             method="multi"
         )
-        logger.info("dim_weather appended to Supabase successfully")
+        logger.info("dim_weather appended to Postgres database successfully")
 
     logger.info(f"Load completed for {year}-{month:02d}")

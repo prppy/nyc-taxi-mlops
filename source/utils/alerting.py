@@ -3,7 +3,8 @@ from airflow.utils.email import send_email
 import pandas as pd
 
 LOG_CSV_PATH = "logs/task_run_log.csv"
-ALERT_EMAIL = "myathetchai441@gmail.com"
+ALERT_EMAILS = ["myathetchai441@gmail.com", "bernieleowyj@gmail.com", "hyixhi@gmail.com", 
+                "zendalimxy@gmail.com", "pojaroysg29@gmail.com"]
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def on_failure_alert(context: dict):
 
     try:
         send_email(
-            to=ALERT_EMAIL,
+            to=ALERT_EMAILS,
             subject=subject,
             html_content=body,
             files=[LOG_CSV_PATH]   # attaches the CSV directly
