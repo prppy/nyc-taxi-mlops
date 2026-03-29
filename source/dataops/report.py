@@ -13,6 +13,8 @@ from utils.db import engine
 from utils.monitoring import monitor
 from utils.alerting import ALERT_EMAILS
 
+from airflow.utils.email import send_email
+
 logger = logging.getLogger(__name__)
 
 
@@ -379,28 +381,29 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
 
 def _send_email_with_charts(subject: str, html_body: str, images: dict):
     """Send email with chart images as PNG attachments.
-    images: {filename: png_bytes}
+    images: {filename: png_bytes} — saves each to a temp file and attaches.
     """
-    from airflow.models import Variable
+    import tempfile, os
 
-    from_addr = "bt4301groupeight@gmail.com"
-    password  = Variable.get("smtp_password")
-    to_list   = ALERT_EMAILS if isinstance(ALERT_EMAILS, list) else [ALERT_EMAILS]
+    tmp_files = []
+    try:
+        # write each chart to a temp file so send_email can attach it
+        for filename, png_bytes in images.items():
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.write(png_bytes)
+            tmp.close()
+            tmp_files.append((tmp.name, filename))
 
-    msg = MIMEMultipart("mixed")
-    msg["Subject"] = subject
-    msg["From"]    = from_addr
-    msg["To"]      = ", ".join(to_list)
-    msg.attach(MIMEText(html_body, "html"))
-
-    for filename, png_bytes in images.items():
-        img = MIMEImage(png_bytes, name=filename)
-        img.add_header("Content-Disposition", "attachment", filename=filename)
-        msg.attach(img)
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(from_addr, password)
-        server.sendmail(from_addr, to_list, msg.as_string())
+        send_email(
+            to=ALERT_EMAILS,
+            subject=subject,
+            html_content=html_body,
+            files=[path for path, _ in tmp_files],
+        )
+    finally:
+        # clean up temp files
+        for path, _ in tmp_files:
+            os.unlink(path)
 
 
 # main task
