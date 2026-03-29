@@ -8,7 +8,6 @@ from typing import List
 from utils.db import engine
 from utils.monitoring import monitor
 from utils.alerting import ALERT_EMAILS
-from airflow.utils.email import send_email
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +56,15 @@ HIST_GRID_MAX_COLS    = 3
 
 # private helpers
 
-def _fig_to_b64(fig):
-    """Render a matplotlib figure to a base64 PNG string."""
+def _fig_to_bytes(fig) -> bytes:
+    """Render a matplotlib figure to PNG bytes."""
     import matplotlib.pyplot as plt
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=CHART_DPI, bbox_inches="tight")
     buf.seek(0)
-    encoded = base64.b64encode(buf.read()).decode("utf-8")
+    data = buf.read()
     plt.close(fig)
-    return encoded
+    return data
 
 
 def _style_axes(ax, title):
@@ -170,6 +169,38 @@ def _img_tag(b64: str) -> str:
     if not b64:
         return ""
     return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;margin:8px 0"/>'
+
+def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
+    """Returns {filename: png_bytes} for all report charts."""
+    charts = {}
+
+    fig_bytes = _numeric_dist_chart(fact_df, FACT_NUMERIC, "Fact trips — numeric distributions")
+    if fig_bytes:
+        charts["fact_numeric_distributions.png"] = fig_bytes
+
+    for col in FACT_CATEGORICAL:
+        fig_bytes = _categorical_bar_chart(fact_df, col)
+        if fig_bytes:
+            charts[f"categorical_{col}.png"] = fig_bytes
+
+    nonzero_null = fact_df.isnull().mean().sort_values(ascending=False)
+    nonzero_null = nonzero_null[nonzero_null > 0]
+    if not nonzero_null.empty:
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as mticker
+        fig, ax = plt.subplots(figsize=(7, max(2.5, 0.35 * len(nonzero_null))))
+        ax.barh(nonzero_null.index[::-1], nonzero_null.values[::-1], color=NULL_BAR_COLOR, height=0.6)
+        _style_axes(ax, "Null rate by column (fact_trips sample)")
+        ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1))
+        ax.set_xlabel("null %", fontsize=7)
+        fig.tight_layout()
+        charts["null_rates.png"] = _fig_to_bytes(fig)
+
+    fig_bytes = _numeric_dist_chart(weather_df, WEATHER_NUMERIC, "Weather — numeric distributions")
+    if fig_bytes:
+        charts["weather_distributions.png"] = fig_bytes
+
+    return charts
 
 # task helpres
 
@@ -362,6 +393,31 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
     </div>
     """
 
+# email sending
+def _send_email_with_charts(subject: str, html_body: str, images: dict):
+    """charts: {filename: png_bytes}"""
+    from airflow.models import Variable
+
+    from_addr = "bt4301groupeight@gmail.com"
+    password  = Variable.get("smtp_password")
+    to_list   = ALERT_EMAILS if isinstance(ALERT_EMAILS, list) else [ALERT_EMAILS]
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"]    = from_addr
+    msg["To"]      = ", ".join(to_list)
+    msg.attach(MIMEText(html_body, "html"))
+
+    for filename, png_bytes in charts.items():
+        img = MIMEImage(png_bytes, name=filename)  #
+        img.add_header("Content-Disposition", "attachment", filename=filename)
+        msg.attach(img)
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(from_addr, password)
+        server.sendmail(from_addr, to_list, msg.as_string())
+
+
 
 # main task 
 
@@ -382,5 +438,5 @@ def report_data(**context):
     body    = _build_email_body(period, len(fact_df), len(weather_df), flags, fact_df, weather_df)
     subject = f"[DataOps] Quality Report — {period}" + (" ⚠ ANOMALIES DETECTED" if flags else " ✔ Clean")
 
-    send_email(to=ALERT_EMAILS, subject=subject, html_content=body)
+    _send_email_with_charts(subject, body, charts)
     logger.info(f"Report email sent for {period} ({len(flags)} flags)")
