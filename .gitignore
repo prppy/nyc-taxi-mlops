@@ -4,5 +4,8 @@ __pycache__/
 *.parquet
 *.csv
 
+*.crc
+_SUCCESS
 .DS_Store
 data/processed/fact_trips/
+

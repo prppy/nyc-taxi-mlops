@@ -9,12 +9,15 @@ from dataops.validate import validate_raw, validate_processed
 from dataops.lineage import update_lineage
 from dataops.watermark import update_watermark
 
+from utils.alerting import on_failure_alert
 from utils.config import (DAG_ID, SCHEDULE_INTERVAL, RETRY_COUNT)
 
 default_args = {
     "owner": "dataops",
     "start_date": datetime(2024, 1, 1),
     "retries": RETRY_COUNT,
+    "on_failure_callback": on_failure_alert,
+
 }
 
 with DAG(
@@ -22,6 +25,7 @@ with DAG(
     default_args=default_args,
     schedule_interval=SCHEDULE_INTERVAL,
     catchup=False,
+    on_failure_callback=on_failure_alert, 
 ) as dag:
 
     extract_taxi_task = PythonOperator(

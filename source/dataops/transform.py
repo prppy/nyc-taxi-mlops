@@ -49,11 +49,13 @@ def transform_fact(**context):
 
     dfs = []
 
+
     # read yellow data
     try:
-        yellow = spark.read.parquet(yellow_path)
+        yellow = spark.read.parquet(yellow_path) 
+        yellow = yellow.sample(fraction=0.001, seed=42) # sample 0.1%
         yellow = yellow.withColumn("taxi_type", lit("yellow"))
-        dfs.append(yellow)
+        dfs.append(("yellow", yellow))
         print(f"Loaded yellow: {yellow_path}")
     except Exception as e:
         print(f"Yellow missing: {e}")
@@ -61,20 +63,22 @@ def transform_fact(**context):
     # read fhvhv data
     try:
         fhvhv = spark.read.parquet(fhvhv_path)
+        fhvhv = fhvhv.sample(fraction=0.001, seed=42) # sample 0.1%
         fhvhv = fhvhv.withColumn("taxi_type", lit("fhvhv"))
-        dfs.append(fhvhv)
+        dfs.append(("fhvhv", fhvhv))
         print(f"Loaded fhvhv: {fhvhv_path}")
     except Exception as e:
         print(f"FHVHV missing: {e}")
+
 
     if not dfs:
         print("No data found for this month → skipping transform")
         return
     
+
     # standardise each dataset before union
     standardised_dfs = []
-    for df in dfs:
-        taxi_type = df.select("taxi_type").first()[0]
+    for taxi_type, df in dfs:
 
         rename_map = {
             "VendorID": "vendor_id",
@@ -91,16 +95,19 @@ def transform_fact(**context):
             if old in df.columns:
                 df = df.withColumnRenamed(old, new)
 
-        # unify datetime columns
-        df = df.withColumn(
-                "pickup_datetime",
-                coalesce(col("pickup_datetime"), col("tpep_pickup_datetime"))
-            )
+        # parquet file had naming issues..
+        if "congestion_surchage" in df.columns:
+            df = df.withColumnRenamed("congestion_surchage", "congestion_surcharge")
 
-        df = df.withColumn(
-                "dropoff_datetime",
-                coalesce(col("dropoff_datetime"), col("tpep_dropoff_datetime"))
-            )
+        # unify datetime columns
+        if taxi_type == "yellow":
+            if "tpep_pickup_datetime" in df.columns:
+                df = df.withColumn("pickup_datetime", col("tpep_pickup_datetime"))
+            if "tpep_dropoff_datetime" in df.columns:
+                df = df.withColumn("dropoff_datetime", col("tpep_dropoff_datetime"))
+
+        elif taxi_type == "fhvhv":
+           pass
         
         # calculating fhvhv total_amount
         if taxi_type == "fhvhv":
@@ -191,9 +198,9 @@ def transform_fact(**context):
     .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
 
     # write to trip fact table
-    combined = combined.withColumn("year", lit(year))
-    combined = combined.withColumn("month", lit(month))
-    combined = combined.repartition(8)
+    # combined = combined.withColumn("year", lit(year))
+    # combined = combined.withColumn("month", lit(month))
+    combined = combined.repartition(1) # only one connection
 
     # append or overwrite?
     combined.write.mode("overwrite").parquet(fact_path)
