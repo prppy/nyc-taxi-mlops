@@ -4,7 +4,7 @@ import pandas as pd
 
 LOG_CSV_PATH = "logs/task_run_log.csv"
 ALERT_EMAILS = ["myathetchai441@gmail.com", "bernieleowyj@gmail.com", "hyixhi@gmail.com", 
-                "zendalimxy@gmail.com", "pojaroysg29@gmail.com"]
+                "zendalimxy@gmail.com", "parama.roy@u.nus.edu"]
 
 logger = logging.getLogger(__name__)
 
