@@ -55,7 +55,7 @@
 #         .option("password", engine.url.password) \
 #         .option("driver", "org.postgresql.Driver") \
 #         .option("batchsize", 10000) \
-#         .option("numPartitions", 1) \
+#         .option("numPartitions", 4) \
 #         .mode("append") \
 #         .save()
     

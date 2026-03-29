@@ -200,6 +200,7 @@ def transform_fact(**context):
     # write to trip fact table
     # combined = combined.withColumn("year", lit(year))
     # combined = combined.withColumn("month", lit(month))
+    # TODO: temporary repartition
     combined = combined.repartition(1) # only one connection
 
     # append or overwrite?
