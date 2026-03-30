@@ -7,7 +7,7 @@ from dataops.transform import transform_fact, transform_dim_zone, transform_dim_
 from dataops.load import load_data
 from dataops.validate import validate_raw, validate_processed
 #from dataops.lineage import update_lineage
-from dataops.watermark import update_watermark
+from dataops.verify_watermark import validate_data_watermark
 from dataops.setup_db import setup_tables
 from dataops.report import report_data
 
@@ -91,9 +91,9 @@ with DAG(
     #     python_callable=update_lineage
     # )
 
-    watermark_task = PythonOperator(
-        task_id="watermark",
-        python_callable=update_watermark
+    watermark_audit_task = PythonOperator(
+        task_id="watermark_audit",
+        python_callable=validate_data_watermark
     )
 
     # DAG dependencies
@@ -101,4 +101,4 @@ with DAG(
 
     setup_task >> [extract_taxi_task, extract_weather_task, extract_lookup_task] >> validate_raw_task
     validate_raw_task >> transform_tasks >> validate_processed_task 
-    validate_processed_task >> load_task >> report_task >> watermark_task
+    validate_processed_task >> load_task >> report_task >> watermark_audit_task
