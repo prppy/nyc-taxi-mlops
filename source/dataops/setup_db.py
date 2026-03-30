@@ -39,8 +39,11 @@ def setup_tables():
                 bcf                     DOUBLE PRECISION,
                 sales_tax               DOUBLE PRECISION,
                 access_a_ride_flag      BOOLEAN,
-                shared_match_flag       BOOLEAN
+                shared_match_flag       BOOLEAN,
+                row_fingerprint         TEXT
             );
+                          
+            ALTER TABLE fact_trips ADD COLUMN IF NOT EXISTS row_fingerprint TEXT;
 
             CREATE TABLE IF NOT EXISTS dim_weather (
                 date                DATE,
@@ -48,6 +51,13 @@ def setup_tables():
                 precipitation_sum   DOUBLE PRECISION,
                 wind_speed_max      DOUBLE PRECISION,
                 borough             TEXT
+            );
+                          
+            CREATE TABLE IF NOT EXISTS dim_zone (
+                location_id   INTEGER PRIMARY KEY,
+                borough       TEXT,
+                zone          TEXT,
+                service_zone  TEXT
             );
         """))
 
