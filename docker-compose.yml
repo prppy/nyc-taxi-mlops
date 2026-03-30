@@ -46,11 +46,15 @@ services:
       PYTHONPATH: /opt/airflow/source
       PYSPARK_PYTHON: python
       PYSPARK_DRIVER_PYTHON: python
+      AIRFLOW__OPENLINEAGE__TRANSPORT: '{"type": "http", "url": "http://marquez-api:5000"}'
+      OPENLINEAGE_URL: http://marquez-api:5000
+      OPENLINEAGE_NAMESPACE: taxi_etl_project
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
       - ./source/dataops:/opt/airflow/dags
       - ./data:/opt/airflow/data
+      - ./jars:/opt/spark/jars
     ports:
       - "8080:8080"
     command: webserver
@@ -71,12 +75,58 @@ services:
       PYTHONPATH: /opt/airflow/source
       PYSPARK_PYTHON: python
       PYSPARK_DRIVER_PYTHON: python
+      AIRFLOW__OPENLINEAGE__TRANSPORT: '{"type": "http", "url": "http://marquez-api:5000"}'
+      OPENLINEAGE_URL: http://marquez-api:5000
+      OPENLINEAGE_NAMESPACE: taxi_etl_project
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
       - ./source/dataops:/opt/airflow/dags
       - ./data:/opt/airflow/data
+      - ./jars:/opt/spark/jars
     command: scheduler
+
+  marquez-db:
+    image: postgres:14
+    container_name: marquez_db
+    environment:
+      - POSTGRES_USER=marquez
+      - POSTGRES_PASSWORD=marquez
+      - POSTGRES_DB=marquez
+    volumes:
+      - marquez-db-vol:/var/lib/postgresql/data
+
+  marquez-api:
+    image: marquezproject/marquez:0.43.0
+    #platform: linux/amd64 
+    container_name: marquez_api
+    depends_on:
+      - marquez-db
+    ports:
+      - "5000:5000"
+      - "5001:5001"
+    environment:
+      - MARQUEZ_CONFIG=/opt/marquez/config.yml
+      # - POSTGRES_USER=marquez
+      # - POSTGRES_PASSWORD=marquez
+      # - POSTGRES_HOST=marquez-db
+      # - POSTGRES_PORT=5432
+      # - POSTGRES_DB=marquez
+    volumes:
+      - ./config.yml:/opt/marquez/config.yml
+
+  marquez-web:
+    image: marquezproject/marquez-web:0.43.0
+    #platform: linux/amd64
+    container_name: marquez_web
+    depends_on:
+      - marquez-api
+    ports:
+      - "3000:3000"
+    environment:
+      - MARQUEZ_HOST=marquez-api
+      - MARQUEZ_PORT=5000
 
 volumes:
   postgres-db-volume:
+  marquez-db-vol:

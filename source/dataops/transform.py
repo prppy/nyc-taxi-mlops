@@ -39,6 +39,11 @@ def transform_fact(**context):
         .master("local[*]")
         .config("spark.driver.memory", "2g")
         .config("spark.executor.memory", "2g")
+        .config("spark.jars", "/opt/spark/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
+        .config("spark.openlineage.transport.type", "http")
+        .config("spark.openlineage.transport.url", "http://marquez-api:5000")
+        .config("spark.openlineage.namespace", "taxi_etl_project")
         .getOrCreate()
     )
 
@@ -216,7 +221,43 @@ def transform_fact(**context):
 
 @monitor 
 def transform_dim_zone(**context):
-    pass
+    execution_date = context["execution_date"]
+    year = execution_date.year
+    month = execution_date.month
+
+    spark = (
+        SparkSession.builder
+        .appName("Zone Dim Transform")
+        .config("spark.jars", "/opt/spark/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
+        .config("spark.openlineage.transport.type", "http")
+        .config("spark.openlineage.transport.url", "http://marquez-api:5000")
+        .config("spark.openlineage.namespace", "taxi_etl_project")
+        .getOrCreate()
+    )
+    
+    # Path to the lookup file downloaded in extract_lookup
+    input_path = os.path.join("data/raw/lookup", f"taxi_zone_lookup_{year}-{month:02d}.csv")
+    output_path = os.path.join(PROCESSED_PATH, "dim_zone", f"{year}-{month:02d}")
+
+    if not os.path.exists(input_path):
+        print(f"Lookup file missing: {input_path}")
+        return
+
+    df = spark.read.csv(input_path, header=True, inferSchema=True)
+
+    # Standardize column names for SQL
+    df = df.withColumnRenamed("LocationID", "location_id") \
+           .withColumnRenamed("Borough", "borough") \
+           .withColumnRenamed("Zone", "zone") \
+           .withColumnRenamed("service_zone", "service_zone")
+
+    # Final selection and cleaning
+    df = df.select("location_id", "borough", "zone", "service_zone").dropDuplicates(["location_id"])
+
+    df.repartition(1).write.mode("overwrite").parquet(output_path)
+    print(f"Dimension Zone table written to {output_path}")
+    spark.stop()
 
 @monitor
 def transform_dim_weather(**context):
@@ -224,7 +265,16 @@ def transform_dim_weather(**context):
     year = execution_date.year
     month = execution_date.month
 
-    spark = SparkSession.builder.appName("Weather Transform").getOrCreate()
+    spark = (
+        SparkSession.builder
+        .appName("Weather Transform")
+        .config("spark.jars", "/opt/spark/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
+        .config("spark.openlineage.transport.type", "http")
+        .config("spark.openlineage.transport.url", "http://marquez-api:5000")
+        .config("spark.openlineage.namespace", "taxi_etl_project")
+        .getOrCreate()
+    )
 
     print(f"Transforming weather for {year}-{month:02d}")
 
