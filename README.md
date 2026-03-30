@@ -1,6 +1,14 @@
 # nyc-taxi-mlops
 
 to run the docker image:
-- docker compose down -v (if previously ran)
+
+first time setup
 - docker compose up airflow-init
-- docker compose up 
+- docker compose up
+
+start docker
+- docker compse up
+
+stop docker
+
+- docker compose down
