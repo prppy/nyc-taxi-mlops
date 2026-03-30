@@ -39,8 +39,11 @@ def setup_tables():
                 bcf                     DOUBLE PRECISION,
                 sales_tax               DOUBLE PRECISION,
                 access_a_ride_flag      BOOLEAN,
-                shared_match_flag       BOOLEAN
+                shared_match_flag       BOOLEAN,
+                row_fingerprint         TEXT
             );
+                          
+            ALTER TABLE fact_trips ADD COLUMN IF NOT EXISTS row_fingerprint TEXT;
 
             CREATE TABLE IF NOT EXISTS dim_weather (
                 date                DATE,

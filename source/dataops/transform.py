@@ -4,6 +4,7 @@ from pyspark.sql.functions import col, coalesce, lit, when
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 from utils.config import PROCESSED_PATH, get_raw_file_path
 from utils.monitoring import monitor
+from utils.watermark import apply_cryptographic_watermark
 
 STANDARD_TRIP_FACT_COLUMNS = [
     "pickup_datetime", "dropoff_datetime", "pulocationid", "dolocationid", "trip_distance", "fare_amount", "total_amount",
@@ -206,6 +207,8 @@ def transform_fact(**context):
     .withColumn("wav_match_flag", col("wav_match_flag").cast(BooleanType())) \
     .withColumn("access_a_ride_flag", col("access_a_ride_flag").cast(BooleanType())) \
     .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
+
+    combined = apply_cryptographic_watermark(combined)
 
     # write to trip fact table
     # combined = combined.withColumn("year", lit(year))
