@@ -49,6 +49,13 @@ def setup_tables():
                 wind_speed_max      DOUBLE PRECISION,
                 borough             TEXT
             );
+                          
+            CREATE TABLE IF NOT EXISTS dim_zone (
+                location_id   INTEGER PRIMARY KEY,
+                borough       TEXT,
+                zone          TEXT,
+                service_zone  TEXT
+            );
         """))
 
 if __name__ == "__main__":
