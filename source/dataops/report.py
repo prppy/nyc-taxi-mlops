@@ -1,12 +1,8 @@
 import io
-import base64
 import logging
-import smtplib
 import pandas as pd
 
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
+
 from typing import List
 
 from utils.db import engine
@@ -23,10 +19,10 @@ logger = logging.getLogger(__name__)
 # ── columns to profile ────────────────────────────────────────────────────────
 FACT_NUMERIC = [
     "trip_distance", "fare_amount", "total_amount",
-    "tip_amount", "tolls_amount", "congestion_surcharge",
-    "passenger_count", "trip_time",
+    "tip_amount", "tolls_amount", "congestion_surcharge", "trip_time",
+    "airport_fee", "cbd_congestion_fee"
 ]
-FACT_CATEGORICAL = ["taxi_type", "payment_type", "ratecode_id"]
+FACT_CATEGORICAL = ["taxi_type", "pulocationid", "dolocationid"]
 WEATHER_NUMERIC  = ["temperature_mean", "precipitation_sum", "wind_speed_max"]
 
 # ── sampling ──────────────────────────────────────────────────────────────────
@@ -119,24 +115,83 @@ def _numeric_dist_chart(df: pd.DataFrame, columns: List[str], title: str) -> byt
     return _fig_to_bytes(fig)
 
 
-def _categorical_bar_chart(df: pd.DataFrame, column: str) -> bytes:
+def _categorical_bar_charts(df: pd.DataFrame, columns: List[str], title: str) -> bytes:
     """
-    Horizontal bar chart for a categorical column's value counts.
+    Grid of horizontal bar charts — one subplot per categorical column.
     Returns PNG bytes.
     """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
- 
-    if column not in df.columns:
+
+    cols_present = [c for c in columns if c in df.columns]
+    if not cols_present:
         return b""
 
-    vc = df[column].value_counts().head(CAT_BAR_MAX_CATEGORIES)
-    fig, ax = plt.subplots(figsize=(5, max(2.5, 0.4 * len(vc))))
-    ax.barh(vc.index.astype(str)[::-1], vc.values[::-1], color=HIST_COLOR, height=0.6)
-    _style_axes(ax, column)
-    ax.set_xlabel("trips", fontsize=7)
+    n = len(cols_present)
+    ncols = min(HIST_GRID_MAX_COLS, n)
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 3 * nrows))
+    axes = [axes] if n == 1 else list(axes.flat)
+
+    for ax, col in zip(axes, cols_present):
+        vc = df[col].value_counts().head(CAT_BAR_MAX_CATEGORIES)
+
+        ax.barh(
+            vc.index.astype(str)[::-1],
+            vc.values[::-1],
+            color=HIST_COLOR,
+            height=0.6
+        )
+
+        _style_axes(ax, col)
+        ax.set_xlabel("trips", fontsize=7)
+
+    # hide unused axes
+    for ax in axes[len(cols_present):]:
+        ax.set_visible(False)
+
+    fig.suptitle(title, fontsize=11, fontweight="bold", y=1.01)
     fig.tight_layout()
+
+    return _fig_to_bytes(fig)
+
+def _null_rate_charts(df: pd.DataFrame, title: str) -> bytes:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+
+    null_rates = df.isnull().mean()
+    null_rates = null_rates[null_rates > 0]
+
+    if null_rates.empty:
+        return b""
+
+    cols = null_rates.index.tolist()
+    values = null_rates.values
+
+    n = len(cols)
+    ncols = min(HIST_GRID_MAX_COLS, n)
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 2.5 * nrows))
+    axes = [axes] if n == 1 else list(axes.flat)
+
+    for ax, col, val in zip(axes, cols, values):
+        ax.barh([col], [val], color=NULL_BAR_COLOR)
+        _style_axes(ax, col)
+        ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1))
+        ax.set_xlim(0, 1)
+
+    # hide unused axes
+    for ax in axes[len(cols):]:
+        ax.set_visible(False)
+
+    fig.suptitle(title, fontsize=11, fontweight="bold", y=1.02)
+    fig.tight_layout()
+
     return _fig_to_bytes(fig)
 
 
@@ -179,23 +234,21 @@ def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
     if fig_bytes:
         charts["fact_numeric_distributions.png"] = fig_bytes
 
-    for col in FACT_CATEGORICAL:
-        fig_bytes = _categorical_bar_chart(fact_df, col)
-        if fig_bytes:
-            charts[f"categorical_{col}.png"] = fig_bytes
+    fig_bytes = _categorical_bar_charts(
+        fact_df,
+        FACT_CATEGORICAL,
+        "Fact trips — categorical distributions"
+    )
+    if fig_bytes:
+        charts["categorical_distributions.png"] = fig_bytes
 
-    nonzero_null = fact_df.isnull().mean().sort_values(ascending=False)
-    nonzero_null = nonzero_null[nonzero_null > 0]
-    if not nonzero_null.empty:
-        import matplotlib.pyplot as plt
-        import matplotlib.ticker as mticker
-        fig, ax = plt.subplots(figsize=(7, max(2.5, 0.35 * len(nonzero_null))))
-        ax.barh(nonzero_null.index[::-1], nonzero_null.values[::-1], color=NULL_BAR_COLOR, height=0.6)
-        _style_axes(ax, "Null rate by column (fact_trips sample)")
-        ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1))
-        ax.set_xlabel("null %", fontsize=7)
-        fig.tight_layout()
-        charts["null_rates.png"] = _fig_to_bytes(fig)
+    fig_bytes = _null_rate_charts(
+        fact_df,
+        "Null rate by column (fact_trips sample)"
+        )
+    if fig_bytes:
+        charts["null_rates.png"] = fig_bytes
+
 
     fig_bytes = _numeric_dist_chart(weather_df, WEATHER_NUMERIC, "Weather — numeric distributions")
     if fig_bytes:
@@ -233,11 +286,6 @@ def _anomaly_flags(df: pd.DataFrame) -> List[str]:
         if invalid_time > 0:
             flags.append(f"⚠ {invalid_time:,} rows have pickup_datetime >= dropoff_datetime")
 
-    if "passenger_count" in df.columns:
-        zero_pax = (df["passenger_count"] == 0).mean()
-        if zero_pax > ZERO_PAX_RATE_THRESHOLD:
-            flags.append(f"⚠ {zero_pax:.1%} of trips have zero passenger_count")
-
     # null rate check across all columns
     null_rates = df.isnull().mean()
     high_null = null_rates[null_rates > HIGH_NULL_RATE_THRESHOLD]
@@ -252,7 +300,7 @@ def _anomaly_flags(df: pd.DataFrame) -> List[str]:
 # joining columns for a targeted SELECT instead of SELECT * (more efficient!)
 FACT_COLUMNS = list(set(
     FACT_NUMERIC + FACT_CATEGORICAL +
-    ["pickup_datetime", "dropoff_datetime", "request_datetime", "on_scene_datetime"]
+    ["pickup_datetime", "dropoff_datetime"]
 ))
 WEATHER_COLUMNS = WEATHER_NUMERIC + ["date"]
 
@@ -310,7 +358,9 @@ def _build_fact_section(fact_df: pd.DataFrame) -> str:
       <h3>Fact trips — descriptive statistics</h3>
       {stats_html}
       <h3>Categorical distributions</h3>
-      <p style="color:#666;font-size:12px">See attached: categorical_*.png</p>
+      <p style="color:#666;font-size:12px">
+        See attached: categorical_distributions.png
+        </p>
     """
 
 
@@ -379,32 +429,39 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
 
 # email sending
 
-def _send_email_with_charts(subject: str, html_body: str, images: dict):
-    """Send email with chart images as PNG attachments.
-    images: {filename: png_bytes} — saves each to a temp file and attaches.
-    """
+def _send_email_with_charts(subject: str, html_body: str, images: dict, period: str):
     import tempfile, os
+    import uuid
+
+    base_dir = os.path.join(tempfile.gettempdir(), "reports", period)
+    os.makedirs(base_dir, exist_ok=True)
 
     tmp_files = []
     try:
-        # write each chart to a temp file so send_email can attach it
         for filename, png_bytes in images.items():
-            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-            tmp.write(png_bytes)
-            tmp.close()
-            tmp_files.append((tmp.name, filename))
+            name, ext = os.path.splitext(filename)
+
+            tmp_path = os.path.join(
+                base_dir,
+                f"{name}_{uuid.uuid4()}{ext}"
+            )
+
+            with open(tmp_path, "wb") as f:
+                f.write(png_bytes)
+
+            tmp_files.append(tmp_path)
 
         send_email(
             to=ALERT_EMAILS,
             subject=subject,
             html_content=html_body,
-            files=[path for path, _ in tmp_files],
+            files=tmp_files
         )
-    finally:
-        # clean up temp files
-        for path, _ in tmp_files:
-            os.unlink(path)
 
+    finally:
+        # comment out if we want to keep the files (won't be temp anymore)
+        for path in tmp_files:
+            os.unlink(path)
 
 # main task
 
@@ -426,5 +483,5 @@ def report_data(**context):
     body    = _build_email_body(period, len(fact_df), len(weather_df), flags, fact_df, weather_df)
     subject = f"[DataOps] Quality Report — {period}" + (" ⚠ ANOMALIES DETECTED" if flags else " ✔ Clean")
 
-    _send_email_with_charts(subject, body, charts)
+    _send_email_with_charts(subject, body, charts, period)
     logger.info(f"Report email sent for {period} ({len(flags)} flags)")
