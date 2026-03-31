@@ -432,20 +432,23 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
 def _send_email_with_charts(subject: str, html_body: str, images: dict, period: str):
     import tempfile, os
     import uuid
-
-    base_dir = os.path.join(tempfile.gettempdir(), "reports", period)
+    # avoids parallel runs even for the same period
+    run_id = str(uuid.uuid4())
+    base_dir = os.path.join(
+        tempfile.gettempdir(),
+        "reports",
+        period,
+        run_id
+    )
     os.makedirs(base_dir, exist_ok=True)
 
     tmp_files = []
     try:
         for filename, png_bytes in images.items():
-            name, ext = os.path.splitext(filename)
-
             tmp_path = os.path.join(
                 base_dir,
-                f"{name}_{uuid.uuid4()}{ext}"
+                filename
             )
-
             with open(tmp_path, "wb") as f:
                 f.write(png_bytes)
 
