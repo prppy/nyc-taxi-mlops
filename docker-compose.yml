@@ -54,7 +54,7 @@ services:
       - ./source:/opt/airflow/source
       - ./source/dataops:/opt/airflow/dags
       - ./data:/opt/airflow/data
-      - ./jars:/opt/spark/jars
+     # - ./jars:/opt/spark/jars
     ports:
       - "8080:8080"
     command: webserver

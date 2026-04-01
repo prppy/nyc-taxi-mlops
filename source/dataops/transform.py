@@ -40,7 +40,8 @@ def transform_fact(**context):
         .master("local[*]")
         .config("spark.driver.memory", "2g")
         .config("spark.executor.memory", "2g")
-        .config("spark.jars", "/opt/spark/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.executor.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
         .config("spark.openlineage.transport.type", "http")
         .config("spark.openlineage.transport.url", "http://marquez-api:5000")
@@ -231,7 +232,8 @@ def transform_dim_zone(**context):
     spark = (
         SparkSession.builder
         .appName("Zone Dim Transform")
-        .config("spark.jars", "/opt/spark/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.executor.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
         .config("spark.openlineage.transport.type", "http")
         .config("spark.openlineage.transport.url", "http://marquez-api:5000")
@@ -271,7 +273,8 @@ def transform_dim_weather(**context):
     spark = (
         SparkSession.builder
         .appName("Weather Transform")
-        .config("spark.jars", "/opt/spark/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
+        .config("spark.executor.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
         .config("spark.openlineage.transport.type", "http")
         .config("spark.openlineage.transport.url", "http://marquez-api:5000")
