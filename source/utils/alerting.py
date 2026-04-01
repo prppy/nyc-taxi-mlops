@@ -1,11 +1,10 @@
 import logging
 from airflow.utils.email import send_email
 import pandas as pd
+import os 
 
 LOG_CSV_PATH = "logs/task_run_log.csv"
-ALERT_EMAILS = "myathetchai441@gmail.com"
-# ALERT_EMAILS = ["myathetchai441@gmail.com", "bernieleowyj@gmail.com", "hyixhi@gmail.com", 
-#                 "zendalimxy@gmail.com", "parama.roy@u.nus.edu"]
+ALERT_EMAILS = os.getenv("ALERT_EMAILS")
 
 logger = logging.getLogger(__name__)
 
