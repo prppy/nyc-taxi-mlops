@@ -2,6 +2,7 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, coalesce, lit, when
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
+import shutil
 from utils.config import PROCESSED_PATH, get_raw_file_path
 from utils.monitoring import monitor
 from utils.watermark import apply_cryptographic_watermark
@@ -210,20 +211,12 @@ def transform_fact(**context):
     .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
 
     combined = apply_cryptographic_watermark(combined)
-
-    # write to trip fact table
-    # combined = combined.withColumn("year", lit(year))
-    # combined = combined.withColumn("month", lit(month))
-    # TODO: temporary repartition
-    combined = combined.repartition(1) # only one connection
-
-    # append or overwrite?
     combined.write.mode("overwrite").parquet(fact_path)
 
     print("Fact table appended successfully")
     spark.stop()
 
-@monitor 
+@monitor
 def transform_dim_zone(**context):
     execution_date = context["execution_date"]
     year = execution_date.year
@@ -240,28 +233,60 @@ def transform_dim_zone(**context):
         .config("spark.openlineage.namespace", "taxi_etl_project")
         .getOrCreate()
     )
-    
+
     # Path to the lookup file downloaded in extract_lookup
     input_path = os.path.join("data/raw/lookup", f"taxi_zone_lookup_{year}-{month:02d}.csv")
-    output_path = os.path.join(PROCESSED_PATH, "dim_zone", f"{year}-{month:02d}")
+    final_output_path = os.path.join("data/processed", "dim_zone.csv")
+    temp_output_dir = os.path.join("data/processed", "_dim_zone_tmp")
 
     if not os.path.exists(input_path):
         print(f"Lookup file missing: {input_path}")
+        spark.stop()
         return
 
     df = spark.read.csv(input_path, header=True, inferSchema=True)
-
     # Standardize column names for SQL
-    df = df.withColumnRenamed("LocationID", "location_id") \
-           .withColumnRenamed("Borough", "borough") \
-           .withColumnRenamed("Zone", "zone") \
-           .withColumnRenamed("service_zone", "service_zone")
+    df = (
+        df.withColumnRenamed("LocationID", "location_id")
+          .withColumnRenamed("Borough", "borough")
+          .withColumnRenamed("Zone", "zone")
+          .withColumnRenamed("service_zone", "service_zone")
+          .select("location_id", "borough", "zone", "service_zone")
+          .dropDuplicates(["location_id"])
+    )
 
-    # Final selection and cleaning
-    df = df.select("location_id", "borough", "zone", "service_zone").dropDuplicates(["location_id"])
+    # Clean up old outputs
+    if os.path.exists(temp_output_dir):
+        shutil.rmtree(temp_output_dir)
+    if os.path.exists(final_output_path):
+        os.remove(final_output_path)
 
-    df.repartition(1).write.mode("overwrite").parquet(output_path)
-    print(f"Dimension Zone table written to {output_path}")
+    # Write to temporary folder first
+    (
+        df.repartition(1)
+          .write
+          .mode("overwrite")
+          .option("header", True)
+          .csv(temp_output_dir)
+    )
+
+    # Find the actual Spark part file and rename it
+    part_file = None
+    for file_name in os.listdir(temp_output_dir):
+        if file_name.startswith("part-") and file_name.endswith(".csv"):
+            part_file = os.path.join(temp_output_dir, file_name)
+            break
+
+    if part_file is None:
+        spark.stop()
+        raise FileNotFoundError(f"No Spark part file found in {temp_output_dir}")
+
+    os.rename(part_file, final_output_path)
+
+    # Remove temp folder and leftover Spark metadata files
+    shutil.rmtree(temp_output_dir)
+
+    print(f"Dimension Zone table written to {final_output_path}")
     spark.stop()
 
 @monitor

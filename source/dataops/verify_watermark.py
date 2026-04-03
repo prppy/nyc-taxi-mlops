@@ -1,8 +1,5 @@
-#import json
-#import os
 from utils.monitoring import monitor
 from utils.watermark import verify_data_integrity
-from datetime import datetime
 from pyspark.sql import SparkSession
 
 #WATERMARK_FILE = "docs/watermark.json"
