@@ -54,7 +54,6 @@ services:
       - ./source:/opt/airflow/source
       - ./source/dataops:/opt/airflow/dags
       - ./data:/opt/airflow/data
-     # - ./jars:/opt/spark/jars
     ports:
       - "8080:8080"
     command: webserver
@@ -83,7 +82,6 @@ services:
       - ./source:/opt/airflow/source
       - ./source/dataops:/opt/airflow/dags
       - ./data:/opt/airflow/data
-      - ./jars:/opt/spark/jars
     command: scheduler
 
   marquez-db:
@@ -98,7 +96,7 @@ services:
 
   marquez-api:
     image: marquezproject/marquez:0.43.0
-    #platform: linux/amd64 
+    # platform: linux/amd64 
     container_name: marquez_api
     depends_on:
       - marquez-db
@@ -117,7 +115,7 @@ services:
 
   marquez-web:
     image: marquezproject/marquez-web:0.43.0
-    #platform: linux/amd64
+    # platform: linux/amd64
     container_name: marquez_web
     depends_on:
       - marquez-api
