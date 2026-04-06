@@ -23,7 +23,7 @@ PLOTS_PATH = os.path.join(BASE_PATH, "eda_plots")
 os.makedirs(PLOTS_PATH, exist_ok=True)
 
 
-def load_all_monthly_parquet(base_path: str):
+def load_all_monthly_parquet(base_path: str, months: list = None):
     dfs = []
 
     if not os.path.exists(base_path):
@@ -37,8 +37,11 @@ def load_all_monthly_parquet(base_path: str):
         ]
     )
 
-    if not month_folders:
-        raise ValueError(f"No month folders found in {base_path}")
+    # to filter for speicific months if requested
+    if months:
+        month_folders = [m for m in month_folders if m in months]
+        if not month_folders:
+            raise ValueError(f"None of the requested months {months} found in {base_path}")
 
     for month in month_folders:
         path = os.path.join(base_path, month)
@@ -46,7 +49,7 @@ def load_all_monthly_parquet(base_path: str):
             df = pd.read_parquet(path)
             df["data_month"] = month
             dfs.append(df)
-            print(f"Loaded: {path}")
+            print(f"  Loaded: {path} — {len(df):,} rows")   
         except Exception as e:
             print(f"Failed to load {path}: {e}")
 
@@ -55,17 +58,17 @@ def load_all_monthly_parquet(base_path: str):
 
     return pd.concat(dfs, ignore_index=True)
 
-def create_joined_dataset(fact_path: str, zone_path: str, weather_path: str):
+def create_joined_dataset(fact_path, zone_path, weather_path, months=None):
     print("Loading fact_trips...")
-    fact_df = load_all_monthly_parquet(fact_path)
+    fact_df = load_all_monthly_parquet(fact_path, months=months)
 
     print("Loading dim_zone...")
-    zone_df = load_all_monthly_parquet(zone_path)
+    zone_df = load_all_monthly_parquet(zone_path, months=months)
     zone_df = zone_df.drop_duplicates(subset=["location_id"])
     zone_df = zone_df.drop('data_month', axis=1)
 
     print("Loading dim_weather...")
-    weather_df = load_all_monthly_parquet(weather_path)
+    weather_df = load_all_monthly_parquet(weather_path, months=months)
     weather_df["date"] = pd.to_datetime(weather_df["date"], errors="coerce").dt.date
     weather_df = weather_df.drop('data_month', axis=1)
 
@@ -310,7 +313,7 @@ def print_summary_statistics(df):
 
 def main():
     # 1. load and join data
-    joined_df = create_joined_dataset(FACT_PATH, ZONE_PATH, WEATHER_PATH)
+    joined_df = create_joined_dataset(FACT_PATH, ZONE_PATH, WEATHER_PATH, months=["2025-01"])
     print(f"\nTotal number of rows: {len(joined_df):,} rows")
     
     # 2. Engineer features
