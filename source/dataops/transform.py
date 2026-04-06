@@ -25,7 +25,6 @@ def transform_fact(**context):
     fact_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
     if os.path.exists(fact_path):
         # check if folder has actual parquet files
-        files = os.listdir(fact_path)
         parquet_files = [
             f for f in os.listdir(fact_path)
             if f.startswith("part-") and f.endswith(".parquet")
