@@ -57,7 +57,7 @@ HIGH_NULL_RATE_THRESHOLD     = 0.30
 # flag if proportion of zero-demand rows exceeds this threshold.
 ZERO_DEMAND_RATE_THRESHOLD = 0.5
 # flag any row with demand above this value (possible outlier or surge event).
-HIGH_DEMAND_THRESHOLD = 200
+HIGH_DEMAND_THRESHOLD = 3000
 
 # ── chart appearance ──────────────────────────────────────────────────────────
 CHART_DPI             = 110      # png resolution; raise for crisper images

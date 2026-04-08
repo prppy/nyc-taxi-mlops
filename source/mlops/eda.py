@@ -1,336 +1,388 @@
 import os
 import re
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 plt.style.use('seaborn-v0_8-darkgrid')
-BLUE_COLOR = '#1f77b4' 
-LIGHT_BLUE = '#6baed6'
-DARK_BLUE = '#08519c'
-
-pd.set_option('display.max_columns', None)
-pd.set_option('display.max_rows', 100)
+BLUE_COLOR = '#1f77b4'
 
 BASE_PATH = "data/processed"
-FACT_PATH = os.path.join(BASE_PATH, "fact_trips")
-ZONE_PATH = os.path.join(BASE_PATH, "dim_zone")
+ZONE_PATH = os.path.join(BASE_PATH, "dim_zone.csv")
 WEATHER_PATH = os.path.join(BASE_PATH, "dim_weather")
+FACT_PICKUP_PATH = os.path.join(BASE_PATH, "fact_trips_pickup")
+# FACT_PAIR_PATH = os.path.join(BASE_PATH, "fact_trips_pair")
 
-# output directory for plots
-PLOTS_PATH = os.path.join(BASE_PATH, "eda_plots")
+EDA_PATH = os.path.join(BASE_PATH, "eda")
+JOINED_PATH = os.path.join(EDA_PATH, "joined")
+PLOTS_PATH = os.path.join(EDA_PATH, "plots")
+
+OUTPUT_PICKUP_PATH = os.path.join(JOINED_PATH, "pickup.parquet")
+OUTPUT_PAIR_PATH = os.path.join(JOINED_PATH, "pair.parquet")
+
+os.makedirs(JOINED_PATH, exist_ok=True)
 os.makedirs(PLOTS_PATH, exist_ok=True)
 
 
 def load_all_monthly_parquet(base_path: str, months: list = None):
-    dfs = []
-
+    """Load monthly parquet folders and tag each row with data_month."""
     if not os.path.exists(base_path):
         raise ValueError(f"Path does not exist: {base_path}")
 
-    month_folders = sorted(
-        [
-            folder for folder in os.listdir(base_path)
-            if os.path.isdir(os.path.join(base_path, folder))
-            and re.match(r"^\d{4}-\d{2}$", folder)
-        ]
-    )
+    month_folders = sorted([
+        f for f in os.listdir(base_path)
+        if os.path.isdir(os.path.join(base_path, f))
+        and re.match(r"^\d{4}-\d{2}$", f)
+    ])
 
-    # to filter for speicific months if requested
     if months:
         month_folders = [m for m in month_folders if m in months]
         if not month_folders:
             raise ValueError(f"None of the requested months {months} found in {base_path}")
 
+    dfs = []
     for month in month_folders:
         path = os.path.join(base_path, month)
         try:
             df = pd.read_parquet(path)
             df["data_month"] = month
+            count = len(df)
             dfs.append(df)
-            print(f"  Loaded: {path} — {len(df):,} rows")   
+            print(f"  Loaded: {month} — {count:,} rows")
         except Exception as e:
-            print(f"Failed to load {path}: {e}")
+            print(f"  Failed to load {path}: {e}")
 
     if not dfs:
-        raise ValueError(f"No parquet files could be loaded from {base_path}")
+        raise ValueError(f"No parquet files loaded from {base_path}")
 
-    return pd.concat(dfs, ignore_index=True)
+    result = pd.concat(dfs, ignore_index=True)
 
-def create_joined_dataset(fact_path, zone_path, weather_path, months=None):
-    print("Loading fact_trips...")
-    fact_df = load_all_monthly_parquet(fact_path, months=months)
+    return result
 
-    print("Loading dim_zone...")
-    zone_df = load_all_monthly_parquet(zone_path, months=months)
-    zone_df = zone_df.drop_duplicates(subset=["location_id"])
-    zone_df = zone_df.drop('data_month', axis=1)
 
-    print("Loading dim_weather...")
-    weather_df = load_all_monthly_parquet(weather_path, months=months)
-    weather_df["date"] = pd.to_datetime(weather_df["date"], errors="coerce").dt.date
-    weather_df = weather_df.drop('data_month', axis=1)
+def load_zone():
+    if not os.path.exists(ZONE_PATH):
+        raise ValueError(f"Path does not exist: {ZONE_PATH}")
 
-    print("\n=== DATA PREVIEW ===")
-    print("\nFact Trips Shape:", fact_df.shape)
-    print(f"Fact Trips Columns ({len(fact_df.columns)}): {fact_df.columns.tolist()}")
-    print("Null values in Fact Trips:\n", fact_df.isnull().sum())
-    print("\nDim Zone Shape:", zone_df.shape)
-    print(f"Dim Zone Columns ({len(zone_df.columns)}): {zone_df.columns.tolist()}")
-    print("Null values in Dim Zone:\n", zone_df.isnull().sum())
-    print("\nDim Weather Shape:", weather_df.shape)
-    print(f"Dim Weather Columns ({len(weather_df.columns)}): {weather_df.columns.tolist()}")
-    print("Null values in Dim Weather:\n", weather_df.isnull().sum())
+    df = pd.read_csv(ZONE_PATH).drop_duplicates(subset=["location_id"])
+    print(f"  Loaded dim_zone: {len(df):,} rows")
+    return df
 
-    # convert datetime columns
-    fact_df["pickup_datetime"] = pd.to_datetime(fact_df["pickup_datetime"], errors="coerce")
-    fact_df["dropoff_datetime"] = pd.to_datetime(fact_df["dropoff_datetime"], errors="coerce")
 
-    # join tables
-    print("\n=== JOINING TABLES ===")
-    joined_df = fact_df.merge(
-        zone_df,
+def load_weather(months=None):
+    df = load_all_monthly_parquet(WEATHER_PATH, months=months)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.drop(columns=["data_month"])
+    return df
+
+
+def join_dimensions(fact_df, zone_df, weather_df):
+    # Prepare zone lookup
+    zone_cols = zone_df[["location_id", "borough", "zone", "service_zone"]].copy()
+    
+    # Prepare weather data
+    weather_df = weather_df.rename(columns={"date": "weather_date"}).copy()
+    weather_df["weather_date"] = pd.to_datetime(weather_df["weather_date"], errors="coerce").dt.date
+    
+    # Join with zone
+    fact_zone = fact_df.merge(
+        zone_cols,
         left_on="pulocationid",
         right_on="location_id",
         how="left"
     )
-
-    joined_df["pickup_date"] = joined_df["pickup_datetime"].dt.date
-    joined_df = joined_df.merge(
+    fact_zone = fact_zone.drop(columns=["location_id"])
+    fact_zone["pickup_date"] = pd.to_datetime(fact_zone["hour_ts"]).dt.date
+    
+    # Join with weather
+    joined = fact_zone.merge(
         weather_df,
         left_on=["pickup_date", "borough"],
-        right_on=["date", "borough"],
+        right_on=["weather_date", "borough"],
         how="left"
     )
-
-    print(f"Joined data shape: {joined_df.shape}")
+    joined = joined.drop(columns=["weather_date"])
     
-    # check join quality
-    print(f"\nJoin coverage:")
-    print(f"  Location join success: {(joined_df['borough'].notna().sum() / len(joined_df) * 100):.1f}%")
-    print(f"  Weather join success: {(joined_df['temperature_mean'].notna().sum() / len(joined_df) * 100):.1f}%")
+    total = len(joined)
+    loc_pct = (joined["borough"].notna().sum() / total * 100) if total else 0
+    weather_pct = (joined["temperature_mean"].notna().sum() / total * 100) if total else 0
     
-    return joined_df
+    print(f"Joined shape : {total:,} rows")
+    print(f"Location join: {loc_pct:.1f}%")
+    print(f"Weather join : {weather_pct:.1f}%")
+    
+    return joined
 
-'''
+
 def eda_features(df):
     df = df.copy()
-    df["hour"] = df["pickup_datetime"].dt.hour
-    df["day_of_week"] = df["pickup_datetime"].dt.dayofweek
-    df["month"] = df["pickup_datetime"].dt.month
+    df["hour_ts"] = pd.to_datetime(df["hour_ts"])
+    df["hour"] = df["hour_ts"].dt.hour
+    df["day_of_week"] = (df["hour_ts"].dt.dayofweek + 1) % 7
+    df["month"] = df["hour_ts"].dt.month
     df["is_weekend"] = df["day_of_week"].isin([5, 6]).astype(int)
     return df
 
-def plot_trips_by_hour(df, save_path):
-    plt.figure(figsize=(12, 6))
-    hourly_trips = df.groupby("hour").size()
-    
-    plt.bar(hourly_trips.index, hourly_trips.values, alpha=0.7, edgecolor='black', color=BLUE_COLOR)
-    plt.xlabel('Hour of Day', fontsize=12)
-    plt.ylabel('Number of Trips', fontsize=12)
-    plt.title('Distribution of Trips by Hour', fontsize=14, fontweight='bold')
-    plt.xticks(range(0, 24))
-    plt.grid(axis='y', alpha=0.3)
-    
-    # add value labels on top of bars
-    for i, v in enumerate(hourly_trips.values):
-        plt.text(i, v + (max(hourly_trips.values) * 0.01), str(v), 
-                ha='center', fontsize=8)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'trips_by_hour.png'), dpi=100, bbox_inches='tight')
-    plt.close()
 
-
-def plot_trips_by_day(df, save_path):
-    plt.figure(figsize=(10, 6))
-    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    daily_trips = df.groupby("day_of_week").size()
+def print_summary(pdf, label):
+    print(f"\n=== SUMMARY ({label}) ===")
+    print(f"Columns: {list(pdf.columns)}")
     
-    plt.bar(day_names, daily_trips.values, alpha=0.7, edgecolor='black', color=BLUE_COLOR)
-    plt.xlabel('Day of Week', fontsize=12)
-    plt.ylabel('Number of Trips', fontsize=12)
-    plt.title('Distribution of Trips by Day of Week', fontsize=14, fontweight='bold')
-    plt.xticks(rotation=45)
-    plt.grid(axis='y', alpha=0.3)
+    numeric_cols = [
+        "demand",
+        "avg_trip_distance",
+        "avg_total_amount",
+        "temperature_mean",
+        "precipitation_sum",
+    ]
+    existing = [c for c in numeric_cols if c in pdf.columns]
     
-    # add value labels
-    for i, v in enumerate(daily_trips.values):
-        plt.text(i, v + (max(daily_trips.values) * 0.01), f'{v:,}', 
-                ha='center', fontsize=9)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'trips_by_day.png'), dpi=100, bbox_inches='tight')
-    plt.close()
-
-
-def plot_top_zones(df, save_path):
-    plt.figure(figsize=(12, 6))
-    top_zones = df.groupby("pulocationid").size().sort_values(ascending=False).head(10)
-    
-    if 'zone' in df.columns:
-        zone_names = df.groupby("pulocationid")['zone'].first().loc[top_zones.index]
-        labels = [f"{zone_names[loc]} (ID: {loc})" for loc in top_zones.index]
+    if existing:
+        print(pdf[existing].describe())
     else:
-        labels = [f"Zone ID: {loc}" for loc in top_zones.index]
+        print("No numeric columns found for summary.")
+
+
+def add_bar_labels(ax, orientation="vertical", fmt="{:.1f}"):
+    """Add labels on bars."""
+    for patch in ax.patches:
+        if orientation == "vertical":
+            height = patch.get_height()
+            if pd.notnull(height):
+                ax.annotate(
+                    fmt.format(height),
+                    (patch.get_x() + patch.get_width() / 2, height),
+                    ha="center",
+                    va="bottom",
+                    xytext=(0, 4),
+                    textcoords="offset points",
+                    fontsize=9
+                )
+        else:
+            width = patch.get_width()
+            if pd.notnull(width):
+                ax.annotate(
+                    fmt.format(width),
+                    (width, patch.get_y() + patch.get_height() / 2),
+                    ha="left",
+                    va="center",
+                    xytext=(4, 0),
+                    textcoords="offset points",
+                    fontsize=9
+                )
+
+
+def plot_demand_by_hour(pdf, label, save_path):
+    hourly = (
+        pdf.groupby("hour", dropna=False)["demand"]
+        .mean()
+        .reindex(range(24), fill_value=0)
+    )
     
-    plt.barh(range(len(top_zones)), top_zones.values, alpha=0.7, edgecolor='black', color=BLUE_COLOR)
-    plt.yticks(range(len(top_zones)), labels)
-    plt.xlabel('Number of Trips', fontsize=12)
-    plt.ylabel('Pickup Zone', fontsize=12)
-    plt.title('Top 10 Pickup Zones', fontsize=14, fontweight='bold')
-    plt.gca().invert_yaxis() 
-    plt.grid(axis='x', alpha=0.3)
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.bar(hourly.index, hourly.values, color=BLUE_COLOR, edgecolor="black", alpha=0.7)
+    ax.set_title(f"Avg Demand by Hour ({label})", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Hour of Day")
+    ax.set_ylabel("Avg Demand")
+    ax.set_xticks(range(24))
+    ax.grid(axis="y", alpha=0.3)
     
-    # add value labels
-    for i, v in enumerate(top_zones.values):
-        plt.text(v + (max(top_zones.values) * 0.01), i, f'{v:,}', 
-                va='center', fontsize=9)
+    add_bar_labels(ax, orientation="vertical", fmt="{:.1f}")
     
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'top_pickup_zones.png'), dpi=100, bbox_inches='tight')
+    plt.savefig(os.path.join(save_path, f"demand_by_hour_{label}.png"), dpi=100)
     plt.close()
+    print(f"Saved: demand_by_hour_{label}.png")
 
-def plot_weather_impact(df, save_path):
+
+def plot_demand_by_day(pdf, label, save_path):
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    daily = (
+        pdf.groupby("day_of_week", dropna=False)["demand"]
+        .mean()
+        .reindex(range(7), fill_value=0)
+    )
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(day_names, daily.values, color=BLUE_COLOR, edgecolor="black", alpha=0.7)
+    ax.set_title(f"Avg Demand by Day of Week ({label})", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Day of Week")
+    ax.set_ylabel("Avg Demand")
+    ax.grid(axis="y", alpha=0.3)
+    
+    add_bar_labels(ax, orientation="vertical", fmt="{:.1f}")
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_path, f"demand_by_day_{label}.png"), dpi=100)
+    plt.close()
+    print(f"Saved: demand_by_day_{label}.png")
+
+
+def plot_demand_by_borough(pdf, label, save_path):
+    if "borough" not in pdf.columns:
+        return
+    
+    borough_df = (
+        pdf.groupby("borough", dropna=False)["demand"]
+        .mean()
+        .sort_values()
+    )
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.barh(
+        borough_df.index.astype(str),
+        borough_df.values,
+        color=BLUE_COLOR,
+        edgecolor="black",
+        alpha=0.7
+    )
+    ax.set_title(f"Avg Demand by Borough ({label})", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Avg Demand")
+    ax.grid(axis="x", alpha=0.3)
+    
+    add_bar_labels(ax, orientation="horizontal", fmt="{:.1f}")
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_path, f"demand_by_borough_{label}.png"), dpi=100)
+    plt.close()
+    print(f"Saved: demand_by_borough_{label}.png")
+
+
+def plot_weather_impact(pdf, label, save_path):
+    if "precipitation_sum" not in pdf.columns:
+        return
+    
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
-    # temperature impact
-    if 'temperature_mean' in df.columns and df['temperature_mean'].notna().any():
-        # bin temperatures
-        df['temp_bin'] = pd.cut(df['temperature_mean'], bins=10)
-        trips_by_temp = df.groupby('temp_bin', observed=True).size()
-        
-        axes[0].bar(range(len(trips_by_temp)), trips_by_temp.values, alpha=0.7, 
-                   edgecolor='black', color=BLUE_COLOR)
-        axes[0].set_xlabel('Temperature Range (°C)', fontsize=12)
-        axes[0].set_ylabel('Number of Trips', fontsize=12)
-        axes[0].set_title('Trip Volume by Temperature', fontsize=12, fontweight='bold')
-        axes[0].set_xticks(range(len(trips_by_temp)))
-        axes[0].set_xticklabels([f'{int(interval.left)}-{int(interval.right)}' 
-                                 for interval in trips_by_temp.index], rotation=45)
-        axes[0].grid(axis='y', alpha=0.3)
+    pdf = pdf.copy()
+    pdf["is_rainy"] = (pdf["precipitation_sum"] > 0).astype(int)
+    rain_mean = pdf.groupby("is_rainy")["demand"].mean().reindex([0, 1], fill_value=0)
     
-    # precipitation impact
-    if 'precipitation_sum' in df.columns and df['precipitation_sum'].notna().any():
-        df['is_rainy'] = (df['precipitation_sum'] > 0).astype(int)
-        rainy_counts = df.groupby('is_rainy').size()
-        labels = ['No Rain', 'Rain']
+    axes[0].bar(
+        ["No Rain", "Rain"],
+        rain_mean.values,
+        color=BLUE_COLOR,
+        edgecolor="black",
+        alpha=0.7
+    )
+    axes[0].set_title(f"Avg Demand: Rain vs No Rain ({label})", fontweight="bold")
+    axes[0].set_ylabel("Avg Demand")
+    axes[0].grid(axis="y", alpha=0.3)
+    add_bar_labels(axes[0], orientation="vertical", fmt="{:.1f}")
+    
+    if "temperature_mean" in pdf.columns:
+        temp_df = pdf.dropna(subset=["temperature_mean", "demand"]).copy()
         
-        axes[1].bar(labels, rainy_counts.values, alpha=0.7, edgecolor='black', color=BLUE_COLOR)
-        axes[1].set_xlabel('Weather Condition', fontsize=12)
-        axes[1].set_ylabel('Number of Trips', fontsize=12)
-        axes[1].set_title('Trip Volume by Rain Condition', fontsize=12, fontweight='bold')
-        axes[1].grid(axis='y', alpha=0.3)
-        
-        # add value labels
-        for i, v in enumerate(rainy_counts.values):
-            axes[1].text(i, v + (max(rainy_counts.values) * 0.01), f'{v:,}', 
-                        ha='center', fontsize=10)
+        if not temp_df.empty and temp_df["temperature_mean"].min() < temp_df["temperature_mean"].max():
+            temp_df["temp_bin"] = pd.cut(temp_df["temperature_mean"], bins=8)
+            temp_mean = temp_df.groupby("temp_bin", observed=False)["demand"].mean()
+            
+            axes[1].bar(
+                range(len(temp_mean)),
+                temp_mean.values,
+                color=BLUE_COLOR,
+                edgecolor="black",
+                alpha=0.7
+            )
+            axes[1].set_xticks(range(len(temp_mean)))
+            axes[1].set_xticklabels([str(x) for x in temp_mean.index], rotation=45)
+            axes[1].set_title(f"Avg Demand by Temperature ({label})", fontweight="bold")
+            axes[1].set_ylabel("Avg Demand")
+            axes[1].grid(axis="y", alpha=0.3)
+            add_bar_labels(axes[1], orientation="vertical", fmt="{:.1f}")
+        else:
+            axes[1].text(0.5, 0.5, "Not enough temperature variation", ha="center", va="center")
+            axes[1].set_axis_off()
     
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'weather_impact.png'), dpi=100, bbox_inches='tight')
+    plt.savefig(os.path.join(save_path, f"weather_impact_{label}.png"), dpi=100)
     plt.close()
+    print(f"Saved: weather_impact_{label}.png")
+
+
+def plot_demand_heatmap(df, save_path, label):
+    """Generate heatmap for hourly demand by day of week."""
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-    # clean up
-    if 'temp_bin' in df.columns:
-        df.drop('temp_bin', axis=1, inplace=True)
-    if 'is_rainy' in df.columns:
-        df.drop('is_rainy', axis=1, inplace=True)
-
-
-def plot_borough_distribution(df, save_path):
-    if 'borough' in df.columns and df['borough'].notna().any():
-        plt.figure(figsize=(10, 6))
-        borough_trips = df['borough'].value_counts()
-        
-        plt.bar(borough_trips.index, borough_trips.values, alpha=0.7, 
-                edgecolor='black', color=BLUE_COLOR)
-        plt.xlabel('Borough', fontsize=12)
-        plt.ylabel('Number of Trips', fontsize=12)
-        plt.title('Trip Distribution by Borough', fontsize=14, fontweight='bold')
-        plt.xticks(rotation=45)
-        plt.grid(axis='y', alpha=0.3)
-        
-        # add value labels on top of bars
-        for i, v in enumerate(borough_trips.values):
-            plt.text(i, v + (max(borough_trips.values) * 0.01), f'{v:,}', 
-                    ha='center', fontsize=10)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(save_path, 'borough_distribution.png'), dpi=100, bbox_inches='tight')
-        plt.close()
-
-
-def plot_time_series_trends(df, save_path):
-    fig, axes = plt.subplots(2, 1, figsize=(14, 10))
-    
-    # daily trends
-    if 'pickup_date' in df.columns:
-        daily_trips = df.groupby('pickup_date').size()
-        axes[0].plot(daily_trips.index, daily_trips.values, alpha=0.7, 
-                    linewidth=1, color=BLUE_COLOR)
-        axes[0].set_xlabel('Date', fontsize=12)
-        axes[0].set_ylabel('Number of Trips', fontsize=12)
-        axes[0].set_title('Daily Trip Volume Over Time', fontsize=12, fontweight='bold')
-        axes[0].grid(alpha=0.3)
-        axes[0].tick_params(axis='x', rotation=45)
-    
-    # hourly heatmap by day of week
-    if 'hour' in df.columns and 'day_of_week' in df.columns:
-        hour_day_pivot = df.groupby(['day_of_week', 'hour']).size().unstack(fill_value=0)
+    if 'hour' in df.columns and 'day_of_week' in df.columns and 'demand' in df.columns:
+        # Create pivot table for heatmap
+        hour_day_pivot = df.groupby(['day_of_week', 'hour'])['demand'].mean().unstack(fill_value=0)
         day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        im = axes[1].imshow(hour_day_pivot.values, aspect='auto', cmap='Blues')
-        axes[1].set_xlabel('Hour of Day', fontsize=12)
-        axes[1].set_ylabel('Day of Week', fontsize=12)
-        axes[1].set_title('Trip Volume Heatmap: Hour vs Day of Week', fontsize=12, fontweight='bold')
-        axes[1].set_xticks(range(0, 24, 2))
-        axes[1].set_yticks(range(len(day_names)))
-        axes[1].set_yticklabels(day_names)
-        plt.colorbar(im, ax=axes[1], label='Number of Trips')
+        
+        im = ax.imshow(hour_day_pivot.values, aspect='auto', cmap='YlOrRd')
+        ax.set_xlabel('Hour of Day', fontsize=12)
+        ax.set_ylabel('Day of Week', fontsize=12)
+        ax.set_title(f'Average Demand Heatmap: Hour vs Day of Week ({label})', 
+                    fontsize=14, fontweight='bold')
+        ax.set_xticks(range(0, 24, 3))
+        ax.set_xticklabels(range(0, 24, 3))
+        ax.set_yticks(range(len(day_names)))
+        ax.set_yticklabels(day_names)
+        plt.colorbar(im, ax=ax, label='Average Demand')
     
     plt.tight_layout()
-    plt.savefig(os.path.join(save_path, 'time_series_trends.png'), dpi=100, bbox_inches='tight')
+    plt.savefig(os.path.join(save_path, f'demand_heatmap_{label}.png'), dpi=100, bbox_inches='tight')
     plt.close()
+    print(f"Saved: demand_heatmap_{label}.png")
+    
 
-def generate_all_plots(df, plots_path: str):
-    print("\n=== GENERATING PLOTS ===")
-    print(f"Saving plots to: {plots_path}")
-    plot_trips_by_hour(df, plots_path)
-    plot_trips_by_day(df, plots_path)
-    plot_top_zones(df, plots_path)
-    plot_weather_impact(df, plots_path)
-    plot_borough_distribution(df, plots_path)
-    plot_time_series_trends(df, plots_path)
+def generate_all_plots(pdf, label, save_path):
+    print(f"\n=== GENERATING PLOTS ({label}) ===")
+    plot_demand_by_hour(pdf, label, save_path)
+    plot_demand_by_day(pdf, label, save_path)
+    plot_demand_by_borough(pdf, label, save_path)
+    plot_weather_impact(pdf, label, save_path)
+    plot_demand_heatmap(pdf, save_path, label)
 
-def print_summary_statistics(df):
-    print("\n=== NUMERIC SUMMARY ===")
-    numeric_cols = ["trip_distance", "fare_amount", "total_amount", 
-                    "temperature_mean", "precipitation_sum", "trip_duration_min", "speed_mph"]
-    existing_numeric = [c for c in numeric_cols if c in df.columns]
-    print(df[existing_numeric].describe())
-'''
 
 def main():
-    # 1. load and join data
-    joined_df = create_joined_dataset(FACT_PATH, ZONE_PATH, WEATHER_PATH, months=["2025-01"])
-    print(f"\nTotal number of rows: {len(joined_df):,} rows")
-    
-    # 2. Engineer features
-    #joined_df = eda_features(joined_df)
-    #print(f"\nTotal number of rows after adding EDA features: {len(joined_df):,} rows")
-    
-    # 2. generate EDA plots
-    #generate_all_plots(joined_df, PLOTS_PATH)
-    
-    # 3. print summary statistics
-    #print_summary_statistics(joined_df)
+    months = None  # eg ["2025-03", "2025-04"] to load selected months only; set to None to load all months
 
-    # 4. save final dataset
-    output_path = os.path.join(BASE_PATH, "eda_joined.parquet")
-    joined_df.to_parquet(output_path, index=False)
-    print(f"\nSaved joined EDA dataset to: {output_path}")
-    #print(f"Plots saved to: {PLOTS_PATH}")
+    print("\nLoading dim_zone...")
+    zone_df = load_zone()
+    
+    print("\nLoading dim_weather...")
+    weather_df = load_weather(months=months)
+    
+    print("\n" + "=" * 60)
+    print("VERSION 1: PICKUP ZONE")
+    print("=" * 60)
+    
+    print("\nLoading fact_trips_pickup...")
+    pickup_df = load_all_monthly_parquet(FACT_PICKUP_PATH, months=months)
+    pickup_df = pickup_df.drop(columns=["data_month"])
+    
+    print("\nJoining dimensions...")
+    pickup_joined = join_dimensions(pickup_df, zone_df, weather_df)
+    pickup_joined = eda_features(pickup_joined)
+    
+    print_summary(pickup_joined, "PICKUP")
+    generate_all_plots(pickup_joined, "pickup", PLOTS_PATH)
+    
+    pickup_joined.to_parquet(OUTPUT_PICKUP_PATH, index=False)
+    print(f"\nSaved: {OUTPUT_PICKUP_PATH}")
+    
+    '''
+    print("\n" + "=" * 60)
+    print("VERSION 2: PICKUP-DROPOFF PAIR")
+    print("=" * 60)
+    
+    print("\nLoading fact_trips_pair...")
+    pair_df = load_all_monthly_parquet(FACT_PAIR_PATH, months=months)
+    pair_df = pair_df.drop(columns=["data_month"])
+    
+    print("\nJoining dimensions...")
+    pair_joined = join_dimensions(pair_df, zone_df, weather_df)
+    pair_joined = eda_features(pair_joined)
+    
+    print_summary(pair_joined, "PICKUP-DROPOFF PAIR")
+    generate_all_plots(pair_joined, "pair", PLOTS_PATH)
+    
+    pair_joined.to_parquet(OUTPUT_PAIR_PATH, index=False)
+    print(f"\nSaved: {OUTPUT_PAIR_PATH}")
+    '''
+    
+    print("\nEDA completed.")
+
 
 if __name__ == "__main__":
     main()
