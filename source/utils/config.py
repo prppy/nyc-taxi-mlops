@@ -36,6 +36,9 @@ DIM_TABLES = {
 
 ZONE_LOOKUP_FILE = f"{RAW_PATH}taxi_zone_lookup.csv"
 
+# unwanted location ids
+EXCLUDED_LOCATION_IDS = [264, 265]
+
 # airflow dag configs
 DAG_ID = "taxi_data_pipeline"
 SCHEDULE_INTERVAL = "@monthly"   # or "@daily"

@@ -126,11 +126,11 @@ def encode_location_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     if "borough" in df.columns:
-        borough_dummies = pd.get_dummies(df["borough"], prefix="borough", dummy_na=True)
+        borough_dummies = pd.get_dummies(df["borough"], prefix="borough")
         df = pd.concat([df, borough_dummies], axis=1)
 
     if "service_zone" in df.columns:
-        service_zone_dummies = pd.get_dummies(df["service_zone"], prefix="service_zone", dummy_na=True)
+        service_zone_dummies = pd.get_dummies(df["service_zone"], prefix="service_zone")
         df = pd.concat([df, service_zone_dummies], axis=1)
 
     return df
@@ -155,7 +155,13 @@ def final_cleaning(df: pd.DataFrame) -> pd.DataFrame:
 
 def engineer_features(df: pd.DataFrame, version: str = "pickup") -> pd.DataFrame:
     df = df.copy()
-
+    
+    # drop lineage / audit-only columns before feature creation
+    cols_to_drop = ["row_fingerprint"]
+    existing_cols_to_drop = [c for c in cols_to_drop if c in df.columns]
+    if existing_cols_to_drop:
+        df = df.drop(columns=existing_cols_to_drop)
+        
     df = prepare_base_features(df)
     df = add_weather_features(df)
 
