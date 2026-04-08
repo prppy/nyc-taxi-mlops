@@ -17,12 +17,24 @@ logger = logging.getLogger(__name__)
 # constants
 
 # ── columns to profile ────────────────────────────────────────────────────────
+# version 1: pickup zone + hour aggregated fact table
 FACT_NUMERIC = [
-    "trip_distance", "fare_amount", "total_amount",
-    "tip_amount", "tolls_amount", "congestion_surcharge", "trip_time",
-    "airport_fee", "cbd_congestion_fee"
+    "demand",
+    "avg_trip_distance",
+    "avg_fare",
+    "avg_total_amount",
+    "avg_trip_time",
+    "avg_tolls_amount",
+    "avg_tip_amount",
+    "avg_airport_fee",
+    "avg_congestion_surcharge",
+    "avg_extra",
 ]
-FACT_CATEGORICAL = ["taxi_type", "pulocationid", "dolocationid"]
+
+FACT_CATEGORICAL = [
+    "pulocationid",
+]
+
 WEATHER_NUMERIC  = ["temperature_mean", "precipitation_sum", "wind_speed_max"]
 
 # ── sampling ──────────────────────────────────────────────────────────────────
@@ -42,6 +54,10 @@ HIGH_FARE_THRESHOLD          = 500
 ZERO_PAX_RATE_THRESHOLD      = 0.10
 # flag any column whose null rate exceeds this share (e.g. 0.30 = 30%).
 HIGH_NULL_RATE_THRESHOLD     = 0.30
+# flag if proportion of zero-demand rows exceeds this threshold.
+ZERO_DEMAND_RATE_THRESHOLD = 0.5
+# flag any row with demand above this value (possible outlier or surge event).
+HIGH_DEMAND_THRESHOLD = 200
 
 # ── chart appearance ──────────────────────────────────────────────────────────
 CHART_DPI             = 110      # png resolution; raise for crisper images
@@ -204,13 +220,25 @@ def _stats_html(df: pd.DataFrame, columns: List[str]) -> str:
     if not cols_present:
         return "<p>No numeric columns found.</p>"
 
-    stats = df[cols_present].describe().loc[
-        ["count", "mean", "std", "min", "25%", "50%", "75%", "max"]
-    ].T.round(2)
+    if df.empty:
+        return "<p>No data found for this period.</p>"
+
+    described = df[cols_present].describe()
+
+    wanted_rows = ["count", "mean", "std", "min", "25%", "50%", "75%", "max"]
+    available_rows = [r for r in wanted_rows if r in described.index]
+
+    if not available_rows:
+        return "<p>No descriptive statistics available.</p>"
+
+    stats = described.loc[available_rows].T.round(2)
 
     rows = "".join(
         f"<tr><td><b>{idx}</b></td>"
-        + "".join(f"<td>{v:,.2f}</td>" for v in row)
+        + "".join(
+            f"<td>{v:,.2f}</td>" if pd.notnull(v) else "<td>-</td>"
+            for v in row
+        )
         + "</tr>"
         for idx, row in stats.iterrows()
     )
@@ -230,21 +258,21 @@ def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
     """Returns {filename: png_bytes} for all report charts."""
     charts = {}
 
-    fig_bytes = _numeric_dist_chart(fact_df, FACT_NUMERIC, "Fact trips — numeric distributions")
+    fig_bytes = _numeric_dist_chart(fact_df, FACT_NUMERIC, "Fact trips pickup — numeric distributions")
     if fig_bytes:
         charts["fact_numeric_distributions.png"] = fig_bytes
 
     fig_bytes = _categorical_bar_charts(
         fact_df,
         FACT_CATEGORICAL,
-        "Fact trips — categorical distributions"
+        "Fact trips pickup — categorical distributions"
     )
     if fig_bytes:
         charts["categorical_distributions.png"] = fig_bytes
 
     fig_bytes = _null_rate_charts(
         fact_df,
-        "Null rate by column (fact_trips sample)"
+        "Null rate by column (fact_trips_pickup sample)"
         )
     if fig_bytes:
         charts["null_rates.png"] = fig_bytes
@@ -261,32 +289,39 @@ def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
 
 def _anomaly_flags(df: pd.DataFrame) -> List[str]:
     """
-    Simple rule-based anomaly checks. Returns a list of warning strings.
-    Extend these thresholds to match your domain expectations.
+    Simple rule-based anomaly checks for aggregated pickup zone-hour fact table.
+    Returns a list of warning strings.
     """
     flags = []
 
-    if "trip_distance" in df.columns:
-        zero_dist = (df["trip_distance"] == 0).mean()
-        if zero_dist > ZERO_DISTANCE_RATE_THRESHOLD:
-            flags.append(f"⚠ {zero_dist:.1%} of trips have zero trip_distance")
+    if df.empty:
+        flags.append("⚠ No fact_trips_pickup rows found for this period")
+        return flags
 
-    if "fare_amount" in df.columns:
-        neg_fare = (df["fare_amount"] < 0).sum()
+    if "demand" in df.columns:
+        zero_demand = (df["demand"] == 0).mean()
+        if zero_demand > ZERO_DEMAND_RATE_THRESHOLD:
+            flags.append(f"⚠ {zero_demand:.1%} of rows have zero demand")
+
+        high_demand = (df["demand"] > HIGH_DEMAND_THRESHOLD).sum()
+        if high_demand > 0:
+            flags.append(f"⚠ {high_demand:,} rows have demand > {HIGH_DEMAND_THRESHOLD} (possible outlier)")
+
+    if "avg_fare" in df.columns:
+        neg_fare = (df["avg_fare"] < 0).sum()
         if neg_fare > 0:
-            flags.append(f"⚠ {neg_fare:,} rows have negative fare_amount")
+            flags.append(f"⚠ {neg_fare:,} rows have negative avg_fare")
 
-    if "total_amount" in df.columns:
-        high_fare = (df["total_amount"] > HIGH_FARE_THRESHOLD).sum()
-        if high_fare > 0:
-            flags.append(f"⚠ {high_fare:,} rows have total_amount > ${HIGH_FARE_THRESHOLD} (possible outlier)")
+    if "avg_total_amount" in df.columns:
+        neg_total = (df["avg_total_amount"] < 0).sum()
+        if neg_total > 0:
+            flags.append(f"⚠ {neg_total:,} rows have negative avg_total_amount")
 
-    if "pickup_datetime" in df.columns and "dropoff_datetime" in df.columns:
-        invalid_time = (df["pickup_datetime"] >= df["dropoff_datetime"]).sum()
-        if invalid_time > 0:
-            flags.append(f"⚠ {invalid_time:,} rows have pickup_datetime >= dropoff_datetime")
+    if "avg_trip_distance" in df.columns:
+        neg_distance = (df["avg_trip_distance"] < 0).sum()
+        if neg_distance > 0:
+            flags.append(f"⚠ {neg_distance:,} rows have negative avg_trip_distance")
 
-    # null rate check across all columns
     null_rates = df.isnull().mean()
     high_null = null_rates[null_rates > HIGH_NULL_RATE_THRESHOLD]
     for col, rate in high_null.items():
@@ -298,38 +333,73 @@ def _anomaly_flags(df: pd.DataFrame) -> List[str]:
 # data loaders
 
 # joining columns for a targeted SELECT instead of SELECT * (more efficient!)
-FACT_COLUMNS = list(set(
-    FACT_NUMERIC + FACT_CATEGORICAL +
-    ["pickup_datetime", "dropoff_datetime"]
+# version 1: pickup zone + hour fact table
+FACT_COLUMNS = list(dict.fromkeys(
+    FACT_NUMERIC + FACT_CATEGORICAL + ["hour_ts"]
 ))
+
+# version 2: pickup-dropoff pair table
+# FACT_COLUMNS = list(dict.fromkeys(
+#     FACT_NUMERIC + ["pulocationid", "dolocationid", "hour_ts"]
+# ))
+
 WEATHER_COLUMNS = WEATHER_NUMERIC + ["date"]
 
 
 def load_fact_sample(period: str) -> pd.DataFrame:
     cols = ", ".join(FACT_COLUMNS)
+
     try:
         return pd.read_sql(
             f"""
             SELECT {cols}
-            FROM fact_trips TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
-            WHERE DATE_TRUNC('month', pickup_datetime) = '{period}-01'
+            FROM fact_trips_pickup TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
+            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
             LIMIT {SAMPLE_ROW_LIMIT}
             """,
             engine,
-            parse_dates=["pickup_datetime", "dropoff_datetime",
-                         "request_datetime", "on_scene_datetime"],
+            parse_dates=["hour_ts"],
         )
     except Exception:
         return pd.read_sql(
             f"""
             SELECT {cols}
-            FROM fact_trips
-            WHERE DATE_TRUNC('month', pickup_datetime) = '{period}-01'
+            FROM fact_trips_pickup
+            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
             LIMIT {FALLBACK_ROW_LIMIT}
             """,
             engine,
-            parse_dates=["pickup_datetime", "dropoff_datetime"],
+            parse_dates=["hour_ts"],
         )
+
+'''
+version 2: pickup-dropoff pair table
+def load_fact_sample(period: str) -> pd.DataFrame:
+    cols = ", ".join(FACT_COLUMNS)
+
+    try:
+        return pd.read_sql(
+            f"""
+            SELECT {cols}
+            FROM fact_trips_pair TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
+            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
+            LIMIT {SAMPLE_ROW_LIMIT}
+            """,
+            engine,
+            parse_dates=["hour_ts"],
+        )
+    except Exception:
+        return pd.read_sql(
+            f"""
+            SELECT {cols}
+            FROM fact_trips_pair
+            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
+            LIMIT {FALLBACK_ROW_LIMIT}
+            """,
+            engine,
+            parse_dates=["hour_ts"],
+        )
+'''
 
 
 def load_weather(period: str) -> pd.DataFrame:
@@ -355,7 +425,7 @@ def _build_fact_section(fact_df: pd.DataFrame) -> str:
     stats_html = _stats_html(fact_df, FACT_NUMERIC)
 
     return f"""
-      <h3>Fact trips — descriptive statistics</h3>
+      <h3>Fact trips pickup — descriptive statistics</h3>
       {stats_html}
       <h3>Categorical distributions</h3>
       <p style="color:#666;font-size:12px">
@@ -408,7 +478,7 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
 
       <h2 style="margin-bottom:4px">Data Quality Report — {period}</h2>
       <p style="color:#666;margin-top:0">
-        Sampled <b>{n_fact:,}</b> fact_trips rows &nbsp;|&nbsp;
+        Sampled <b>{n_fact:,}</b> fact_trips_pickup rows &nbsp;|&nbsp;
         <b>{n_weather:,}</b> dim_weather rows
       </p>
 
@@ -421,7 +491,7 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
       {_build_weather_section(weather_df)}
 
       <p style="color:#999;font-size:11px;margin-top:24px">
-        Generated by Airflow DAG · {period} · charts based on a {TABLESAMPLE_PCT}% sample of fact_trips
+        Generated by Airflow DAG · {period} · charts based on a {TABLESAMPLE_PCT}% sample of fact_trips_pickup
       </p>
     </div>
     """
@@ -479,7 +549,7 @@ def report_data(**context):
 
     fact_df    = load_fact_sample(period)
     weather_df = load_weather(period)
-    logger.info(f"Sampled {len(fact_df):,} fact_trips rows, {len(weather_df):,} weather rows")
+    logger.info(f"Sampled {len(fact_df):,} fact_trips_pickup rows, {len(weather_df):,} weather rows")
 
     flags   = _anomaly_flags(fact_df)
     charts  = _collect_charts(fact_df, weather_df)

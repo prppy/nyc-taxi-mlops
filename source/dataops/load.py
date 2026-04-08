@@ -15,24 +15,41 @@ def load_data(**context):
 
     logger.info(f"Starting load for {year}-{month:02d}")
 
-    # load fact_trips
-    month_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
-    if not os.path.exists(month_path):
-        logger.warning(f"No processed fact_trips data found at {month_path}")
-        return
+    # load fact_trips_pickup  (zone-hour aggregated by pickup zone)
+    pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year}-{month:02d}")
+    if not os.path.exists(pickup_path):
+        logger.warning(f"No fact_trips_pickup data found at {pickup_path}")
+    else:
+        pickup_df = pd.read_parquet(pickup_path)
+        logger.info(f"Loaded fact_trips_pickup with {len(pickup_df):,} rows")
+        pickup_df.to_sql(
+            "fact_trips_pickup",
+            engine,
+            if_exists="append",
+            index=False,
+            chunksize=5000,
+            method="multi"
+        )
+        logger.info("fact_trips_pickup appended to Postgres successfully")
 
-    df = pd.read_parquet(month_path)
-    logger.info(f"Loaded fact_trips with {len(df)} rows")
-
-    df.to_sql(
-        "fact_trips",
-        engine,
-        if_exists="append",
-        index=False,
-        chunksize=1000,
-        method="multi"
-    )
-    logger.info("fact_trips appended to Postgres Database successfully")
+    '''
+    # load fact_trips_pair
+    pair_path = os.path.join(PROCESSED_PATH, "fact_trips_pair", f"{year}-{month:02d}")
+    if not os.path.exists(pair_path):
+        logger.warning(f"No fact_trips_pair data found at {pair_path}")
+    else:
+        pair_df = pd.read_parquet(pair_path)
+        logger.info(f"Loaded fact_trips_pair with {len(pair_df):,} rows")
+        pair_df.to_sql(
+            "fact_trips_pair",
+            engine,
+            if_exists="append",
+            index=False,
+            chunksize=5000,
+            method="multi"
+        )
+        logger.info("fact_trips_pair appended to Postgres successfully")
+    '''
 
     # load dim_weather
     weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")

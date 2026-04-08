@@ -1,3 +1,4 @@
+import os
 from utils.monitoring import monitor
 from utils.watermark import verify_data_integrity
 from pyspark.sql import SparkSession
@@ -18,16 +19,28 @@ def validate_data_watermark(**context):
     year, month = execution_date.year, execution_date.month
     
     # Path to the data saved by the transform task
-    fact_path = f"/opt/airflow/data/processed/fact_trips/{year}-{month:02d}"
+    pickup_path = f"/opt/airflow/data/processed/fact_trips_pickup/{year}-{month:02d}"
+    #pair_path = f"/opt/airflow/data/processed/fact_trips_pair/{year}-{month:02d}"
     
     spark = SparkSession.builder.appName("WatermarkVerification").getOrCreate()
     
     print(f"Auditing data integrity for {year}-{month:02d}...")
     
     try:
-        df = spark.read.parquet(fact_path)
-        # If this fails, the task turns RED and the DAG stops
-        verify_data_integrity(df)
+        if os.path.exists(pickup_path):
+            print(f"Verifying pickup fact watermark: {pickup_path}")
+            pickup_df = spark.read.parquet(pickup_path)
+            verify_data_integrity(pickup_df)
+        else:
+            raise FileNotFoundError(f"Pickup fact path missing: {pickup_path}")
+        '''
+        if os.path.exists(pair_path):
+            print(f"Verifying pair fact watermark: {pair_path}")
+            pair_df = spark.read.parquet(pair_path)
+            verify_data_integrity(pair_df)
+        else:
+            raise FileNotFoundError(f"Pair fact path missing: {pair_path}")
+        '''
     finally:
         spark.stop()
 
