@@ -2,6 +2,9 @@
 RAW_PATH = "data/raw/"
 PROCESSED_PATH = "data/processed/"
 
+RAW_WEATHER_PATH = RAW_PATH + "weather/"
+PROCESSED_WEATHER_PATH = PROCESSED_PATH + "dim_weather/"
+
 # urls
 NYCTAXI_URL = "https://d37ci6vzurychx.cloudfront.net"
 
@@ -26,15 +29,17 @@ END_YEAR, END_MONTH = 2022, 2
 TEST_YEAR = 2025
 
 # table names
-FACT_TABLE = "fact_demand"
+FACT_TABLE = "fact_trips"
 
 DIM_TABLES = {
-    "time": "dim_time",
     "zone": "dim_zone",
     "weather": "dim_weather"
 }
 
 ZONE_LOOKUP_FILE = f"{RAW_PATH}taxi_zone_lookup.csv"
+
+# unwanted location ids
+EXCLUDED_LOCATION_IDS = [264, 265]
 
 # airflow dag configs
 DAG_ID = "taxi_data_pipeline"
@@ -49,4 +54,4 @@ def get_raw_file_path(dataset, year, month):
     return f"{RAW_PATH}taxi/{dataset}_tripdata_{year}-{month:02d}.parquet"
 
 def get_processed_fact_path():
-    return f"{PROCESSED_PATH}fact_demand/"
+    return f"{PROCESSED_PATH}{FACT_TABLE}/"

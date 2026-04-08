@@ -11,3 +11,5 @@ _SUCCESS
 data/processed/fact_trips/
 jars/*.jar
 
+source/mlops/.ipynb_checkpoints/
+source/mlops/.Trash-0/

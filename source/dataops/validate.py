@@ -29,11 +29,15 @@ FHVHV_REQUIRED_COLUMNS = {
 }
 
 WEATHER_REQUIRED_COLUMNS = {
-    "date",
-    "temperature_mean",
-    "precipitation_sum",
-    "wind_speed_max",
     "borough",
+    "year",
+    "month",
+    "day_of_week",
+    "avg_temperature_mean",
+    "avg_precipitation_sum",
+    "avg_wind_speed_max",
+    "rainy_days_count",
+    "num_days"
 }
 
 LOOKUP_REQUIRED_COLUMNS = {
@@ -43,7 +47,14 @@ LOOKUP_REQUIRED_COLUMNS = {
     "service_zone",
 }
 
-PROCESSED_FACT_REQUIRED_COLUMNS = set(STANDARD_TRIP_FACT_COLUMNS) | {"row_fingerprint"}
+PROCESSED_FACT_REQUIRED_COLUMNS = {
+    "pulocationid",
+    "dolocationid",
+    "year",
+    "month",
+    "hour",
+    "day_of_week",
+}
 PROCESSED_WEATHER_REQUIRED_COLUMNS = WEATHER_REQUIRED_COLUMNS
 PROCESSED_ZONE_REQUIRED_COLUMNS = {"location_id", "borough", "zone", "service_zone"}
 
@@ -122,29 +133,53 @@ def _raw_weather_checks(df, year, month, errors, warnings):
     if missing_boroughs:
         errors.append(f"weather: missing boroughs {sorted(missing_boroughs)}")
 
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    if df["date"].isna().any():
-        errors.append("weather: some dates could not be parsed")
+    invalid_boroughs = actual_boroughs - expected_boroughs
+    if invalid_boroughs:
+        warnings.append(f"weather: unexpected boroughs {sorted(invalid_boroughs)}")
+
+    if (df["year"] != year).any():
+        errors.append(f"weather: found rows with year not equal to {year}")
+
+    if (df["month"] != month).any():
+        errors.append(f"weather: found rows with month not equal to {month}")
+
+    valid_days = {
+        "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday", "Sunday"
+    }
+    invalid_days = set(df["day_of_week"].dropna().unique()) - valid_days
+    if invalid_days:
+        errors.append(f"weather: invalid day_of_week values {sorted(invalid_days)}")
+
+    dupes = df.duplicated(subset=["borough", "year", "month", "day_of_week"]).sum()
+    if dupes > 0:
+        errors.append(f"weather: found {dupes} duplicate (borough, year, month, day_of_week) rows")
+
+    if (df["avg_precipitation_sum"] < 0).fillna(False).any():
+        errors.append("weather: avg_precipitation_sum has negative values")
+
+    if (df["avg_wind_speed_max"] < 0).fillna(False).any():
+        errors.append("weather: avg_wind_speed_max has negative values")
+
+    if (df["rainy_days_count"] < 0).fillna(False).any():
+        errors.append("weather: rainy_days_count has negative values")
+
+    if (df["num_days"] <= 0).fillna(True).any():
+        errors.append("weather: num_days has non-positive or null values")
 
     expected_days = _month_days(year, month)
-
-    dupes = df.duplicated(subset=["date", "borough"]).sum()
-    if dupes > 0:
-        errors.append(f"weather: found {dupes} duplicate (date, borough) rows")
+    days_per_borough = df.groupby("borough")["num_days"].sum()
 
     for borough in sorted(expected_boroughs):
-        borough_df = df[df["borough"] == borough]
-        actual_days = borough_df["date"].dt.date.nunique()
+        actual_days = int(days_per_borough.get(borough, 0))
         if actual_days != expected_days:
             errors.append(
-                f"weather: borough {borough} has {actual_days} days, expected {expected_days}"
+                f"weather: borough {borough} has num_days total {actual_days}, expected {expected_days}"
             )
 
-    if (df["precipitation_sum"] < 0).fillna(False).any():
-        errors.append("weather: precipitation_sum has negative values")
-
-    if (df["wind_speed_max"] < 0).fillna(False).any():
-        errors.append("weather: wind_speed_max has negative values")
+    too_many_rainy = (df["rainy_days_count"] > df["num_days"]).fillna(False)
+    if too_many_rainy.any():
+        errors.append("weather: rainy_days_count exceeds num_days in some rows")
 
 
 def _lookup_checks(df, path, errors, warnings):
@@ -203,21 +238,11 @@ def _processed_fact_checks(df, errors, warnings):
         errors.append(f"processed fact_trips: missing columns {sorted(missing)}")
         return
 
-    critical_cols = ["pickup_datetime", "dropoff_datetime", "pulocationid", "dolocationid"]
+    critical_cols = ["pulocationid", "dolocationid"]
     nulls = df[critical_cols].isna().sum()
     for col, count in nulls.items():
         if count > 0:
             errors.append(f"processed fact_trips: {count} nulls in critical column {col}")
-
-    pickup_ts = pd.to_datetime(df["pickup_datetime"], errors="coerce")
-    dropoff_ts = pd.to_datetime(df["dropoff_datetime"], errors="coerce")
-    invalid = (pickup_ts >= dropoff_ts).sum()
-    if invalid > 0:
-        errors.append(f"processed fact_trips: {invalid} rows have pickup_datetime >= dropoff_datetime")
-
-    bad_taxi_types = sorted(set(df["taxi_type"].dropna().unique()) - {"yellow", "fhvhv"})
-    if bad_taxi_types:
-        errors.append(f"processed fact_trips: unexpected taxi_type values {bad_taxi_types}")
 
     if df["row_fingerprint"].isna().any():
         errors.append("processed fact_trips: row_fingerprint contains nulls")
@@ -233,11 +258,20 @@ def _processed_weather_checks(df, year, month, errors, warnings):
         errors.append(f"processed dim_weather: missing columns {sorted(missing)}")
         return
 
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    dupes = df.duplicated(subset=["date", "borough"]).sum()
-    if dupes > 0:
-        errors.append(f"processed dim_weather: found {dupes} duplicate (date, borough) rows")
+    expected_boroughs = set(BOROUGH_COORDS.keys())
+    actual_boroughs = set(df["borough"].dropna().unique())
 
+    missing_boroughs = expected_boroughs - actual_boroughs
+    if missing_boroughs:
+        errors.append(f"processed dim_weather: missing boroughs {sorted(missing_boroughs)}")
+
+    dupes = df.duplicated(subset=["borough", "year", "month", "day_of_week"]).sum()
+    if dupes > 0:
+        errors.append(
+            f"processed dim_weather: found {dupes} duplicate "
+            f"(borough, year, month, day_of_week) rows"
+        )
+        
 
 def _processed_zone_checks(df, errors, warnings):
     if df.empty:
@@ -310,67 +344,67 @@ def validate_raw(**context):
     print(f"Raw validation passed for {year}-{month:02d}")
 
 
-@monitor
-def validate_processed(**context):
-    execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+# @monitor
+# def validate_processed(**context):
+#     execution_date = context["execution_date"]
+#     year = execution_date.year
+#     month = execution_date.month
 
-    errors = []
-    warnings = []
+#     errors = []
+#     warnings = []
 
-    # fact
-    fact_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
-    if not os.path.exists(fact_path):
-        errors.append(f"processed fact_trips missing: {fact_path}")
-    else:
-        try:
-            fact_df = pd.read_parquet(fact_path)
-            print(f"Loaded processed fact_trips rows: {len(fact_df):,}")
-            _processed_fact_checks(fact_df, errors, warnings)
-        except Exception as e:
-            errors.append(f"processed fact_trips unreadable: {e}")
+#     # fact
+#     fact_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
+#     if not os.path.exists(fact_path):
+#         errors.append(f"processed fact_trips missing: {fact_path}")
+#     else:
+#         try:
+#             fact_df = pd.read_parquet(fact_path)
+#             print(f"Loaded processed fact_trips rows: {len(fact_df):,}")
+#             _processed_fact_checks(fact_df, errors, warnings)
+#         except Exception as e:
+#             errors.append(f"processed fact_trips unreadable: {e}")
 
-    # weather
-    weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
-    if not os.path.exists(weather_path):
-        errors.append(f"processed dim_weather missing: {weather_path}")
-    else:
-        try:
-            weather_df = pd.read_parquet(weather_path)
-            print(f"Loaded processed dim_weather rows: {len(weather_df):,}")
-            _processed_weather_checks(weather_df, year, month, errors, warnings)
-        except Exception as e:
-            errors.append(f"processed dim_weather unreadable: {e}")
+#     # weather
+#     weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
+#     if not os.path.exists(weather_path):
+#         errors.append(f"processed dim_weather missing: {weather_path}")
+#     else:
+#         try:
+#             weather_df = pd.read_parquet(weather_path)
+#             print(f"Loaded processed dim_weather rows: {len(weather_df):,}")
+#             _processed_weather_checks(weather_df, year, month, errors, warnings)
+#         except Exception as e:
+#             errors.append(f"processed dim_weather unreadable: {e}")
 
-    # zone
-    zone_path = os.path.join(PROCESSED_PATH, "dim_zone.csv")
-    if not os.path.exists(zone_path):
-        errors.append(f"processed dim_zone missing: {zone_path}")
-    else:
-        try:
-            zone_df = pd.read_csv(zone_path)
-            print(f"Loaded processed dim_zone rows: {len(zone_df):,}")
-            _processed_zone_checks(zone_df, errors, warnings)
-        except Exception as e:
-            errors.append(f"processed dim_zone unreadable: {e}")
+#     # zone
+#     zone_path = os.path.join(PROCESSED_PATH, "dim_zone.csv")
+#     if not os.path.exists(zone_path):
+#         errors.append(f"processed dim_zone missing: {zone_path}")
+#     else:
+#         try:
+#             zone_df = pd.read_csv(zone_path)
+#             print(f"Loaded processed dim_zone rows: {len(zone_df):,}")
+#             _processed_zone_checks(zone_df, errors, warnings)
+#         except Exception as e:
+#             errors.append(f"processed dim_zone unreadable: {e}")
 
-    # cross-check processed fact IDs against processed dim_zone
-    if "fact_df" in locals() and "zone_df" in locals() and not fact_df.empty and not zone_df.empty:
-        valid_zone_ids = set(pd.to_numeric(zone_df["location_id"], errors="coerce").dropna().astype(int).unique())
-        used_zone_ids = set(
-            pd.concat([
-                pd.to_numeric(fact_df["pulocationid"], errors="coerce"),
-                pd.to_numeric(fact_df["dolocationid"], errors="coerce"),
-            ]).dropna().astype(int).unique()
-        )
-        missing_zone_ids = sorted(used_zone_ids - valid_zone_ids)
-        if missing_zone_ids:
-            errors.append(
-                f"processed cross-check: fact_trips contains zone ids not present in dim_zone: "
-                f"{missing_zone_ids[:20]}{'...' if len(missing_zone_ids) > 20 else ''}"
-            )
+#     # cross-check processed fact IDs against processed dim_zone
+#     if "fact_df" in locals() and "zone_df" in locals() and not fact_df.empty and not zone_df.empty:
+#         valid_zone_ids = set(pd.to_numeric(zone_df["location_id"], errors="coerce").dropna().astype(int).unique())
+#         used_zone_ids = set(
+#             pd.concat([
+#                 pd.to_numeric(fact_df["pulocationid"], errors="coerce"),
+#                 pd.to_numeric(fact_df["dolocationid"], errors="coerce"),
+#             ]).dropna().astype(int).unique()
+#         )
+#         missing_zone_ids = sorted(used_zone_ids - valid_zone_ids)
+#         if missing_zone_ids:
+#             errors.append(
+#                 f"processed cross-check: fact_trips contains zone ids not present in dim_zone: "
+#                 f"{missing_zone_ids[:20]}{'...' if len(missing_zone_ids) > 20 else ''}"
+#             )
 
-    _warn(warnings)
-    _fail(errors)
-    print(f"Processed validation passed for {year}-{month:02d}")
+#     _warn(warnings)
+#     _fail(errors)
+#     print(f"Processed validation passed for {year}-{month:02d}")

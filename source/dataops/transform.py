@@ -1,45 +1,48 @@
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, coalesce, lit, when
+from pyspark.sql.functions import (
+    col, lit, when, year, month, hour, dayofweek,
+    unix_timestamp, count, avg, sum as spark_sum, coalesce
+)
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 import shutil
-from utils.config import PROCESSED_PATH, get_raw_file_path
+from utils.config import PROCESSED_PATH, EXCLUDED_LOCATION_IDS, get_raw_file_path
 from utils.monitoring import monitor
 from utils.watermark import apply_cryptographic_watermark
 
 STANDARD_TRIP_FACT_COLUMNS = [
-    "pickup_datetime", "dropoff_datetime", "pulocationid", "dolocationid", "trip_distance", "fare_amount", "total_amount",
-    "taxi_type", "vendor_id", "hvfhs_license_num", "dispatching_base_num", "originating_base_num", "passenger_count", "ratecode_id",
-    "request_datetime", "on_scene_datetime", "store_and_fwd_flag", "payment_type", "trip_time", "shared_request_flag", "extra",
-    "mta_tax", "improvement_surcharge", "wav_request_flag", "wav_match_flag", "tip_amount", "tolls_amount", "driver_pay",
-    "congestion_surcharge", "airport_fee", "cbd_congestion_fee", "bcf", "sales_tax", "access_a_ride_flag", "shared_match_flag"
+    "pickup_datetime", "dropoff_datetime", "pulocationid", "dolocationid",
+    "trip_distance", "trip_time", "fare_amount", "tolls_amount", "tip_amount", 
+    "airport_fee", "congestion_surcharge", "cbd_congestion_fee", "extra", 
+    "total_amount"
 ]
 
 @monitor
 def transform_fact(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
-    
-    # skip if already processed
-    fact_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
+    year_val = execution_date.year
+    month_val = execution_date.month
+
+    fact_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year_val}-{month_val:02d}")
+
+    # skip if already exists (idempotency)
     if os.path.exists(fact_path):
-        # check if folder has actual parquet files
         parquet_files = [
             f for f in os.listdir(fact_path)
             if f.startswith("part-") and f.endswith(".parquet")
         ]
-
         if parquet_files:
-            print(f"Data already exists for {year}-{month:02d}, skipping transform")
+            print(f"Data already exists for {year_val}-{month_val:02d}, skipping transform")
             return
-    
+
     spark = (
         SparkSession.builder
-        .appName("Taxi ETL Transform")
-        .master("local[*]")
-        .config("spark.driver.memory", "2g")
-        .config("spark.executor.memory", "2g")
+        .appName("Taxi Fact Transform")
+        .master("local[2]")
+        .config("spark.driver.memory", "1g")
+        .config("spark.executor.memory", "1g")
+        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.default.parallelism", "4")
         .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.executor.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
@@ -49,172 +52,188 @@ def transform_fact(**context):
         .getOrCreate()
     )
 
-    print(f"Transforming fact table for {year}-{month:02d}")
-    
-    yellow_path = get_raw_file_path("yellow", year, month)
-    fhvhv_path = get_raw_file_path("fhvhv", year, month)
+    print(f"Transforming aggregated pair-demand table for {year_val}-{month_val:02d}")
+
+    yellow_path = get_raw_file_path("yellow", year_val, month_val)
+    fhvhv_path = get_raw_file_path("fhvhv", year_val, month_val)
 
     dfs = []
 
-
-    # read yellow data
     try:
-        yellow = spark.read.parquet(yellow_path) 
-        yellow = yellow.sample(fraction=0.001, seed=42) # sample 0.1%
+        yellow = spark.read.parquet(yellow_path)
         yellow = yellow.withColumn("taxi_type", lit("yellow"))
         dfs.append(("yellow", yellow))
         print(f"Loaded yellow: {yellow_path}")
     except Exception as e:
         print(f"Yellow missing: {e}")
 
-    # read fhvhv data
     try:
         fhvhv = spark.read.parquet(fhvhv_path)
-        fhvhv = fhvhv.sample(fraction=0.001, seed=42) # sample 0.1%
         fhvhv = fhvhv.withColumn("taxi_type", lit("fhvhv"))
         dfs.append(("fhvhv", fhvhv))
         print(f"Loaded fhvhv: {fhvhv_path}")
     except Exception as e:
         print(f"FHVHV missing: {e}")
 
-
     if not dfs:
         print("No data found for this month → skipping transform")
         return
     
-
     # standardise each dataset before union
     standardised_dfs = []
     for taxi_type, df in dfs:
-
         rename_map = {
-            "VendorID": "vendor_id",
-            "RatecodeID": "ratecode_id",
-            "PULocationID": "pulocationid",
-            "DOLocationID": "dolocationid",
+            # renaming yellow columns
+            "tpep_pickup_datetime" : "pickup_datetime",
+            "tpep_dropoff_datetime" : "dropoff_datetime",
+            "Airport_fee" : "airport_fee",
+            
+            # renaming fhvhv columns
             "trip_miles": "trip_distance",
             "base_passenger_fare": "fare_amount",
+            "tolls": "tolls_amount",
             "tips": "tip_amount",
-            "tolls": "tolls_amount"
+            
+            # standardisation
+            "PULocationID" : "pulocationid",
+            "DOLocationID" : "dolocationid",
+            
+            # naming issue
+            "congestion_surchage" : "congestion_surcharge"
         }
-
+        
         for old, new in rename_map.items():
             if old in df.columns:
                 df = df.withColumnRenamed(old, new)
                 
-
-        # parquet file had naming issues..
-        if "congestion_surchage" in df.columns:
-            df = df.withColumnRenamed("congestion_surchage", "congestion_surcharge")
-
-        # fill all missing standard columns with None FIRST
-        for col_name in STANDARD_TRIP_FACT_COLUMNS:
-            if col_name not in df.columns:
-                df = df.withColumn(col_name, lit(None))
-        # unify datetime columns
+        for c in STANDARD_TRIP_FACT_COLUMNS:
+            if c not in df.columns:
+                df = df.withColumn(c, lit(None))
+                
         if taxi_type == "yellow":
-            if "tpep_pickup_datetime" in df.columns:
-                df = df.withColumn("pickup_datetime", col("tpep_pickup_datetime"))
-            if "tpep_dropoff_datetime" in df.columns:
-                df = df.withColumn("dropoff_datetime", col("tpep_dropoff_datetime"))
-
-        elif taxi_type == "fhvhv":
-           pass
-        
-        # calculating fhvhv total_amount
-        if taxi_type == "fhvhv":
             df = df.withColumn(
-                "total_amount",
-                coalesce(col("fare_amount"), lit(0)) +
-                coalesce(col("tolls_amount"), lit(0)) +
-                coalesce(col("congestion_surcharge"), lit(0)) +
-                coalesce(col("airport_fee"), lit(0)) +
-                coalesce(col("cbd_congestion_fee"), lit(0))
+                "trip_time",
+                unix_timestamp("dropoff_datetime") - unix_timestamp("pickup_datetime")
+            )
+            df = df.withColumn(
+                "extra", 
+                coalesce(col("extra"), lit(0.0)) + 
+                coalesce(col("mta_tax"), lit(0.0)) + 
+                coalesce(col("improvement_surcharge"), lit(0.0))
+            )
+        else:
+            df = df.withColumn(
+                "extra", 
+                coalesce(col("bcf"), lit(0.0)) + 
+                coalesce(col("sales_tax"), lit(0.0))
+            )
+            
+            df = df.withColumn(
+                "total_amount", 
+                coalesce(col("fare_amount"), lit(0.0)) +
+                coalesce(col("tolls_amount"), lit(0.0)) +
+                coalesce(col("congestion_surcharge"), lit(0.0)) +
+                coalesce(col("cbd_congestion_fee"), lit(0.0)) + 
+                coalesce(col("extra"), lit(0.0)) +
+                coalesce(col("airport_fee"), lit(0.0)) + 
+                coalesce(col("tip_amount"), lit(0.0))
             )
 
-        for col_name in STANDARD_TRIP_FACT_COLUMNS:
-            if col_name not in df.columns:
-                df = df.withColumn(col_name, lit(None))
-
-        df = df.select(STANDARD_TRIP_FACT_COLUMNS)
+        df = df.select(*STANDARD_TRIP_FACT_COLUMNS)
+        df = df.withColumn("year", year(col("pickup_datetime"))) \
+            .withColumn("month", month(col("pickup_datetime")))
         standardised_dfs.append(df)
-
+        
     # union datasets
     combined = standardised_dfs[0]
     for df in standardised_dfs[1:]:
         combined = combined.unionByName(df)
-
-    ## data cleaning
-    # critical fields
+        
+    # data cleaning
     combined = combined.filter(
         col("pickup_datetime").isNotNull() &
         col("dropoff_datetime").isNotNull() &
         col("pulocationid").isNotNull() &
-        col("dolocationid").isNotNull()
+        col("dolocationid").isNotNull() &
+        (~col("pulocationid").isin(EXCLUDED_LOCATION_IDS)) &
+        (~col("dolocationid").isin(EXCLUDED_LOCATION_IDS))
     )
-
-    # invalid trips
-    combined = combined.filter(
-        col("pickup_datetime") < col("dropoff_datetime")
-    )
-
-    # convert flags to boolean
-    FLAG_COLUMNS = [
-        "shared_request_flag", "shared_match_flag", "wav_request_flag", "wav_match_flag", "access_a_ride_flag", "store_and_fwd_flag"
-    ]
-
-    for c in FLAG_COLUMNS:
-        combined = combined.withColumn(
-            c,
-            when(col(c) == "Y", True)
-            .when(col(c) == "N", False)
-            .otherwise(None)
-        )
     
-    # typecasting
+    combined = combined.filter(col("pickup_datetime") < col("dropoff_datetime"))
+    
     combined = combined \
-    .withColumn("pickup_datetime", col("pickup_datetime").cast(TimestampType())) \
-    .withColumn("dropoff_datetime", col("dropoff_datetime").cast(TimestampType())) \
-    .withColumn("pulocationid", col("pulocationid").cast(IntegerType())) \
-    .withColumn("dolocationid", col("dolocationid").cast(IntegerType())) \
-    .withColumn("trip_distance", col("trip_distance").cast(DoubleType())) \
-    .withColumn("fare_amount", col("fare_amount").cast(DoubleType())) \
-    .withColumn("total_amount", col("total_amount").cast(DoubleType())) \
-    .withColumn("passenger_count", col("passenger_count").cast(IntegerType())) \
-    .withColumn("taxi_type", col("taxi_type").cast(StringType())) \
-    .withColumn("vendor_id", col("vendor_id").cast(LongType())) \
-    .withColumn("hvfhs_license_num", col("hvfhs_license_num").cast(StringType())) \
-    .withColumn("dispatching_base_num", col("dispatching_base_num").cast(StringType())) \
-    .withColumn("originating_base_num", col("originating_base_num").cast(StringType())) \
-    .withColumn("ratecode_id", col("ratecode_id").cast(StringType())) \
-    .withColumn("payment_type", col("payment_type").cast(StringType())) \
-    .withColumn("request_datetime", col("request_datetime").cast(TimestampType())) \
-    .withColumn("on_scene_datetime", col("on_scene_datetime").cast(TimestampType())) \
-    .withColumn("trip_time", col("trip_time").cast(LongType())) \
-    .withColumn("extra", col("extra").cast(DoubleType())) \
-    .withColumn("mta_tax", col("mta_tax").cast(DoubleType())) \
-    .withColumn("improvement_surcharge", col("improvement_surcharge").cast(DoubleType())) \
-    .withColumn("tip_amount", col("tip_amount").cast(DoubleType())) \
-    .withColumn("tolls_amount", col("tolls_amount").cast(DoubleType())) \
-    .withColumn("driver_pay", col("driver_pay").cast(DoubleType())) \
-    .withColumn("congestion_surcharge", col("congestion_surcharge").cast(DoubleType())) \
-    .withColumn("airport_fee", col("airport_fee").cast(DoubleType())) \
-    .withColumn("cbd_congestion_fee", col("cbd_congestion_fee").cast(DoubleType())) \
-    .withColumn("bcf", col("bcf").cast(DoubleType())) \
-    .withColumn("sales_tax", col("sales_tax").cast(DoubleType())) \
-    .withColumn("shared_request_flag", col("shared_request_flag").cast(BooleanType())) \
-    .withColumn("shared_match_flag", col("shared_match_flag").cast(BooleanType())) \
-    .withColumn("wav_request_flag", col("wav_request_flag").cast(BooleanType())) \
-    .withColumn("wav_match_flag", col("wav_match_flag").cast(BooleanType())) \
-    .withColumn("access_a_ride_flag", col("access_a_ride_flag").cast(BooleanType())) \
-    .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
+        .withColumn("pickup_datetime", col("pickup_datetime").cast(TimestampType())) \
+        .withColumn("dropoff_datetime", col("dropoff_datetime").cast(TimestampType())) \
+        .withColumn("pulocationid", col("pulocationid").cast(IntegerType())) \
+        .withColumn("dolocationid", col("dolocationid").cast(IntegerType())) \
+        .withColumn("trip_distance", col("trip_distance").cast(DoubleType())) \
+        .withColumn("trip_time", col("trip_time").cast(IntegerType())) \
+        .withColumn("fare_amount", col("fare_amount").cast(DoubleType())) \
+        .withColumn("total_amount", col("total_amount").cast(DoubleType()))
+        
+    combined = combined.filter(
+        col("trip_distance").isNull() | (col("trip_distance") >= 0)
+    ).filter(
+        col("fare_amount").isNull() | (col("fare_amount") >= 0)
+    ).filter(
+        col("total_amount").isNull() | (col("total_amount") >= 0)
+    ).filter(
+        col("trip_time").isNull() | (col("trip_time") > 0)
+    )
+    
+    combined = combined \
+        .withColumn("year", year(col("pickup_datetime"))) \
+        .withColumn("month", month(col("pickup_datetime"))) \
+        .withColumn("hour", hour(col("pickup_datetime"))) \
+        .withColumn("day_of_week", dayofweek(col("pickup_datetime")))
+    
+    aggregated = combined.groupBy(
+        "pulocationid",
+        "dolocationid",
+        "year",
+        "month",
+        "day_of_week",
+        "hour"
+    ).agg(
+        count("*").alias("num_trips"),
 
-    combined = apply_cryptographic_watermark(combined)
-    combined.write.mode("overwrite").parquet(fact_path)
+        avg("fare_amount").alias("avg_fare_amount"),
+        spark_sum("fare_amount").alias("total_fare_amount"),
 
-    print("Fact table appended successfully")
+        avg("trip_distance").alias("avg_trip_distance"),
+        # spark_sum("trip_distance").alias("total_trip_distance"),
+
+        avg("trip_time").alias("avg_trip_time"),
+        # spark_sum("trip_time").alias("total_trip_time"),
+
+        avg("tolls_amount").alias("avg_tolls_amount"),
+        spark_sum("tolls_amount").alias("total_tolls_amount"),
+
+        avg("tip_amount").alias("avg_tip_amount"),
+        spark_sum("tip_amount").alias("total_tip_amount"),
+
+        avg("airport_fee").alias("avg_airport_fee"),
+        spark_sum("airport_fee").alias("total_airport_fee"),
+
+        avg("congestion_surcharge").alias("avg_congestion_surcharge"),
+        spark_sum("congestion_surcharge").alias("total_congestion_surcharge"),
+
+        avg("cbd_congestion_fee").alias("avg_cbd_congestion_fee"),
+        spark_sum("cbd_congestion_fee").alias("total_cbd_congestion_fee"),
+
+        avg("extra").alias("avg_extra"),
+        spark_sum("extra").alias("total_extra"),
+        
+        avg("total_amount").alias("avg_total_amount"),
+        # spark_sum("total_amount").alias("total_total_amount"),
+    )
+    
+    aggregated = apply_cryptographic_watermark(aggregated)
+    aggregated.write.mode("overwrite").parquet(fact_path)
+
+    print("Aggregated pair-demand table saved successfully")
     spark.stop()
-
+  
 @monitor
 def transform_dim_zone(**context):
     execution_date = context["execution_date"]
@@ -296,7 +315,11 @@ def transform_dim_weather(**context):
 
     spark = (
         SparkSession.builder
-        .appName("Weather Transform")
+        .master("local[2]")
+        .config("spark.driver.memory", "1g")
+        .config("spark.executor.memory", "1g")
+        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.default.parallelism", "4")
         .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.executor.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
         .config("spark.extraListeners", "io.openlineage.spark.agent.OpenLineageSparkListener")
@@ -305,26 +328,42 @@ def transform_dim_weather(**context):
         .config("spark.openlineage.namespace", "taxi_etl_project")
         .getOrCreate()
     )
-
+    
     print(f"Transforming weather for {year}-{month:02d}")
 
     input_path = f"data/raw/weather/{year}-{month:02d}.csv"
-
     if not os.path.exists(input_path):
         print(f"No weather data found for {year}-{month:02d}")
         return
 
     df = spark.read.csv(input_path, header=True)
+    
+    # convert day_of_week string to integer
+    df = df.withColumn(
+        "day_of_week",
+        when(col("day_of_week") == "Monday", 2)
+        .when(col("day_of_week") == "Tuesday", 3)
+        .when(col("day_of_week") == "Wednesday", 4)
+        .when(col("day_of_week") == "Thursday", 5)
+        .when(col("day_of_week") == "Friday", 6)
+        .when(col("day_of_week") == "Saturday", 7)
+        .when(col("day_of_week") == "Sunday", 1)
+        .otherwise(None)
+    )
 
     # typecasting
     df = df \
-        .withColumn("date", col("date").cast(DateType())) \
-        .withColumn("temperature_mean", col("temperature_mean").cast(DoubleType())) \
-        .withColumn("precipitation_sum", col("precipitation_sum").cast(DoubleType())) \
-        .withColumn("wind_speed_max", col("wind_speed_max").cast(DoubleType())) \
-        .withColumn("borough", col("borough"))
+        .withColumn("borough", col("borough")) \
+        .withColumn("year", col("year").cast(IntegerType())) \
+        .withColumn("month", col("month").cast(IntegerType())) \
+        .withColumn("day_of_week", col("day_of_week").cast(IntegerType())) \
+        .withColumn("avg_temperature_mean", col("avg_temperature_mean").cast(DoubleType())) \
+        .withColumn("avg_precipitation_sum", col("avg_precipitation_sum").cast(DoubleType())) \
+        .withColumn("avg_wind_speed_max", col("avg_wind_speed_max").cast(DoubleType())) \
+        .withColumn("rainy_days_count", col("rainy_days_count").cast(IntegerType())) \
+        .withColumn("num_days", col("num_days").cast(IntegerType()))
     
-    df = df.dropDuplicates(["date", "borough"])
+    df = df.dropDuplicates(["borough", "year", "month", "day_of_week"])
 
     # write to dim_weather table
     output_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")

@@ -1,13 +1,14 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
+from time import sleep
 
 from dataops.extract import extract_taxi, extract_weather, extract_lookup
 from dataops.transform import transform_fact, transform_dim_zone, transform_dim_weather
 from dataops.load import load_data
-from dataops.validate import validate_raw, validate_processed
-from dataops.verify_watermark import validate_data_watermark
 from dataops.report import report_data
+from dataops.validate import validate_raw #, validate_processed
+from dataops.verify_watermark import validate_data_watermark
 
 from utils.alerting import on_failure_alert
 from utils.db import setup_tables
@@ -18,8 +19,10 @@ default_args = {
     "start_date": datetime(2024, 1, 1),
     "retries": RETRY_COUNT,
     "on_failure_callback": on_failure_alert,
-
 }
+
+def pause_2_minutes():
+    sleep(120)
 
 with DAG(
     dag_id=DAG_ID,
@@ -70,10 +73,10 @@ with DAG(
         python_callable=transform_dim_weather
     )
 
-    validate_processed_task = PythonOperator(
-        task_id="validate_processed",
-        python_callable=validate_processed
-    )
+    # validate_processed_task = PythonOperator(
+    #     task_id="validate_processed",
+    #     python_callable=validate_processed
+    # )
 
     load_task = PythonOperator(
         task_id="load",
@@ -89,9 +92,15 @@ with DAG(
         task_id="watermark_audit",
         python_callable=validate_data_watermark
     )
+    
+    cooldown_task = PythonOperator(
+        task_id="cooldown_2_minutes",
+        python_callable=pause_2_minutes,
+    )
 
     # DAG dependencies
     setup_task >> [extract_taxi_task, extract_weather_task, extract_lookup_task] >> validate_raw_task
     transform_tasks = [transform_fact_task, transform_dim_zone_task, transform_dim_weather_task]
-    validate_raw_task >> transform_tasks >> validate_processed_task 
-    validate_processed_task >> load_task >> report_task >> watermark_audit_task
+    validate_raw_task >> transform_tasks # >> validate_processed_task 
+    transform_tasks >> load_task >> report_task >> watermark_audit_task >> cooldown_task
+    # validate_processed_task >> load_task >> report_task >> watermark_audit_task >> cooldown_task

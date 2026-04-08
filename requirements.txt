@@ -1,4 +1,0 @@
-pyspark==3.5.2
-matplotlib
-apache-airflow-providers-openlineage
-streamlit

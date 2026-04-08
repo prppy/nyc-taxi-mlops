@@ -16,14 +16,51 @@ logger = logging.getLogger(__name__)
 
 # constants
 
-# ── columns to profile ────────────────────────────────────────────────────────
 FACT_NUMERIC = [
-    "trip_distance", "fare_amount", "total_amount",
-    "tip_amount", "tolls_amount", "congestion_surcharge", "trip_time",
-    "airport_fee", "cbd_congestion_fee"
+    "num_trips",
+    "avg_fare_amount",
+    "total_fare_amount",
+    "avg_total_amount",
+    "avg_trip_distance",
+    "avg_trip_time",
+    "avg_tolls_amount",
+    "total_tolls_amount",
+    "avg_tip_amount",
+    "total_tip_amount",
+    "avg_airport_fee",
+    "total_airport_fee",
+    "avg_congestion_surcharge",
+    "total_congestion_surcharge",
+    "avg_cbd_congestion_fee",
+    "total_cbd_congestion_fee",
+    "avg_extra",
+    "total_extra",
+    "avg_total_fee",
 ]
-FACT_CATEGORICAL = ["taxi_type", "pulocationid", "dolocationid"]
-WEATHER_NUMERIC  = ["temperature_mean", "precipitation_sum", "wind_speed_max"]
+
+FACT_CATEGORICAL = [
+    "pulocationid",
+    "dolocationid",
+    "year",
+    "month",
+    "day_of_week",
+    "hour",
+]
+
+WEATHER_NUMERIC = [
+    "avg_temperature_mean",
+    "avg_precipitation_sum",
+    "avg_wind_speed_max",
+    "rainy_days_count",
+    "num_days",
+]
+
+WEATHER_CATEGORICAL = [
+    "borough",
+    "year",
+    "month",
+    "day_of_week",
+]
 
 # ── sampling ──────────────────────────────────────────────────────────────────
 # % passed to TABLESAMPLE SYSTEM(...): 5 means ~5% of pages scanned.
@@ -157,6 +194,7 @@ def _categorical_bar_charts(df: pd.DataFrame, columns: List[str], title: str) ->
 
     return _fig_to_bytes(fig)
 
+
 def _null_rate_charts(df: pd.DataFrame, title: str) -> bytes:
     import matplotlib
     matplotlib.use("Agg")
@@ -258,35 +296,51 @@ def _collect_charts(fact_df: pd.DataFrame, weather_df: pd.DataFrame) -> dict:
 
 
 # task helpers
-
 def _anomaly_flags(df: pd.DataFrame) -> List[str]:
-    """
-    Simple rule-based anomaly checks. Returns a list of warning strings.
-    Extend these thresholds to match your domain expectations.
-    """
     flags = []
 
-    if "trip_distance" in df.columns:
-        zero_dist = (df["trip_distance"] == 0).mean()
-        if zero_dist > ZERO_DISTANCE_RATE_THRESHOLD:
-            flags.append(f"⚠ {zero_dist:.1%} of trips have zero trip_distance")
+    if "num_trips" in df.columns:
+        zero_trips = (pd.to_numeric(df["num_trips"], errors="coerce") <= 0).sum()
+        if zero_trips > 0:
+            flags.append(f"⚠ {zero_trips:,} rows have num_trips <= 0")
 
-    if "fare_amount" in df.columns:
-        neg_fare = (df["fare_amount"] < 0).sum()
-        if neg_fare > 0:
-            flags.append(f"⚠ {neg_fare:,} rows have negative fare_amount")
+    non_negative_cols = [
+        "avg_trip_distance",
+        "avg_trip_time",
+        "avg_fare_amount",
+        "total_fare_amount",
+        "avg_total_amount",
+        "avg_tolls_amount",
+        "total_tolls_amount",
+        "avg_tip_amount",
+        "total_tip_amount",
+        "avg_airport_fee",
+        "total_airport_fee",
+        "avg_congestion_surcharge",
+        "total_congestion_surcharge",
+        "avg_cbd_congestion_fee",
+        "total_cbd_congestion_fee",
+        "avg_extra",
+        "total_extra",
+        "avg_total_fee",
+    ]
 
-    if "total_amount" in df.columns:
-        high_fare = (df["total_amount"] > HIGH_FARE_THRESHOLD).sum()
-        if high_fare > 0:
-            flags.append(f"⚠ {high_fare:,} rows have total_amount > ${HIGH_FARE_THRESHOLD} (possible outlier)")
+    for col in non_negative_cols:
+        if col in df.columns:
+            neg_count = (pd.to_numeric(df[col], errors="coerce") < 0).sum()
+            if neg_count > 0:
+                flags.append(f"⚠ {neg_count:,} rows have negative {col}")
 
-    if "pickup_datetime" in df.columns and "dropoff_datetime" in df.columns:
-        invalid_time = (df["pickup_datetime"] >= df["dropoff_datetime"]).sum()
-        if invalid_time > 0:
-            flags.append(f"⚠ {invalid_time:,} rows have pickup_datetime >= dropoff_datetime")
+    if "day_of_week" in df.columns:
+        bad_dow = (~pd.to_numeric(df["day_of_week"], errors="coerce").isin(range(1, 8))).sum()
+        if bad_dow > 0:
+            flags.append(f"⚠ {bad_dow:,} rows have invalid day_of_week")
 
-    # null rate check across all columns
+    if "hour" in df.columns:
+        bad_hour = (~pd.to_numeric(df["hour"], errors="coerce").isin(range(0, 24))).sum()
+        if bad_hour > 0:
+            flags.append(f"⚠ {bad_hour:,} rows have invalid hour")
+
     null_rates = df.isnull().mean()
     high_null = null_rates[null_rates > HIGH_NULL_RATE_THRESHOLD]
     for col, rate in high_null.items():
@@ -294,62 +348,55 @@ def _anomaly_flags(df: pd.DataFrame) -> List[str]:
 
     return flags
 
-
 # data loaders
 
 # joining columns for a targeted SELECT instead of SELECT * (more efficient!)
-FACT_COLUMNS = list(set(
-    FACT_NUMERIC + FACT_CATEGORICAL +
-    ["pickup_datetime", "dropoff_datetime"]
-))
-WEATHER_COLUMNS = WEATHER_NUMERIC + ["date"]
-
+FACT_COLUMNS = list(set(FACT_NUMERIC + FACT_CATEGORICAL + ["row_fingerprint"]))
+WEATHER_COLUMNS = WEATHER_NUMERIC + WEATHER_CATEGORICAL
 
 def load_fact_sample(period: str) -> pd.DataFrame:
+    year, month = period.split("-")
     cols = ", ".join(FACT_COLUMNS)
+
     try:
         return pd.read_sql(
             f"""
             SELECT {cols}
             FROM fact_trips TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
-            WHERE DATE_TRUNC('month', pickup_datetime) = '{period}-01'
+            WHERE year = {int(year)} AND month = {int(month)}
             LIMIT {SAMPLE_ROW_LIMIT}
             """,
             engine,
-            parse_dates=["pickup_datetime", "dropoff_datetime",
-                         "request_datetime", "on_scene_datetime"],
         )
     except Exception:
         return pd.read_sql(
             f"""
             SELECT {cols}
             FROM fact_trips
-            WHERE DATE_TRUNC('month', pickup_datetime) = '{period}-01'
+            WHERE year = {int(year)} AND month = {int(month)}
             LIMIT {FALLBACK_ROW_LIMIT}
             """,
             engine,
-            parse_dates=["pickup_datetime", "dropoff_datetime"],
         )
 
 
 def load_weather(period: str) -> pd.DataFrame:
+    year, month = period.split("-")
     cols = ", ".join(WEATHER_COLUMNS)
+
     try:
         return pd.read_sql(
             f"""
             SELECT {cols}
             FROM dim_weather
-            WHERE DATE_TRUNC('month', date) = '{period}-01'
+            WHERE year = {int(year)} AND month = {int(month)}
             """,
             engine,
-            parse_dates=["date"],
         )
     except Exception:
         return pd.DataFrame()
 
-
 # email section builders
-
 def _build_fact_section(fact_df: pd.DataFrame) -> str:
     """Stats table for fact_trips — charts are sent as attachments."""
     stats_html = _stats_html(fact_df, FACT_NUMERIC)
@@ -380,7 +427,7 @@ def _build_weather_section(weather_df: pd.DataFrame) -> str:
     stats_html = _stats_html(weather_df, WEATHER_NUMERIC)
 
     return f"""
-      <h3>Weather — descriptive statistics</h3>
+      <h3>Weather — grouped weekday statistics</h3>
       {stats_html}
       <p style="color:#666;font-size:12px">See attached: weather_distributions.png</p>
     """
@@ -428,7 +475,6 @@ def _build_email_body(period: str, n_fact: int, n_weather: int,
 
 
 # email sending
-
 def _send_email_with_charts(subject: str, html_body: str, images: dict, period: str):
     import tempfile, os
     import uuid
@@ -467,7 +513,6 @@ def _send_email_with_charts(subject: str, html_body: str, images: dict, period: 
             os.unlink(path)
 
 # main task
-
 @monitor
 def report_data(**context):
     execution_date = context["execution_date"]
