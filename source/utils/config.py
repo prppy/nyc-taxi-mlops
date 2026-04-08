@@ -21,15 +21,13 @@ BOROUGH_COORDS = {
 }
 
 # dates
-START_YEAR, START_MONTH = 2022, 1
-END_YEAR, END_MONTH = 2022, 2
+START_YEAR, START_MONTH = 2023, 3
 TEST_YEAR = 2025
 
 # table names
 FACT_TABLE = "fact_demand"
 
 DIM_TABLES = {
-    "time": "dim_time",
     "zone": "dim_zone",
     "weather": "dim_weather"
 }
@@ -41,7 +39,7 @@ EXCLUDED_LOCATION_IDS = [264, 265]
 
 # airflow dag configs
 DAG_ID = "taxi_data_pipeline"
-SCHEDULE_INTERVAL = "@monthly"   # or "@daily"
+SCHEDULE_INTERVAL = "0 0 L * *" # "@monthly"   # or "@daily"
 RETRY_COUNT = 0
 
 # logging
@@ -53,3 +51,12 @@ def get_raw_file_path(dataset, year, month):
 
 def get_processed_fact_path():
     return f"{PROCESSED_PATH}fact_demand/"
+
+def get_month_year(execution_date):
+    from dateutil.relativedelta import relativedelta
+    target_date = execution_date - relativedelta(months=2)
+
+    year = target_date.year
+    month = target_date.month
+
+    return (year, month)

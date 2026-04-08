@@ -5,6 +5,7 @@ import pandas as pd
 
 from typing import List
 
+from utils.config import get_month_year
 from utils.db import engine
 from utils.monitoring import monitor
 from utils.alerting import ALERT_EMAILS
@@ -540,8 +541,9 @@ def _send_email_with_charts(subject: str, html_body: str, images: dict, period: 
 @monitor
 def report_data(**context):
     execution_date = context["execution_date"]
-    year  = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
     period = f"{year}-{month:02d}"
 
     logger.info(f"Generating data quality report for {period}")

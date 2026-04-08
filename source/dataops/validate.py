@@ -9,6 +9,7 @@ from utils.config import (
     DATASETS,
     BOROUGH_COORDS,
     get_raw_file_path,
+    get_month_year
 )
 from utils.monitoring import monitor
 
@@ -335,8 +336,9 @@ def _processed_zone_checks(df, errors, warnings):
 @monitor
 def validate_raw(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     errors = []
     warnings = []
@@ -388,8 +390,9 @@ def validate_raw(**context):
 @monitor
 def validate_processed(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     errors = []
     warnings = []
