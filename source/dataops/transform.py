@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, coalesce, lit, when, date_trunc, count, avg, concat_ws
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 import shutil
-from utils.config import PROCESSED_PATH, get_raw_file_path
+from utils.config import PROCESSED_PATH, EXCLUDED_LOCATION_IDS, get_raw_file_path
 from utils.monitoring import monitor
 from utils.watermark import apply_cryptographic_watermark
 
@@ -213,6 +213,19 @@ def transform_fact(**context):
     .withColumn("access_a_ride_flag", col("access_a_ride_flag").cast(BooleanType())) \
     .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
 
+    # remove unwanted unknown location ids before aggregation
+    combined = combined.filter(
+        ~col("pulocationid").isin(EXCLUDED_LOCATION_IDS) &
+        ~col("dolocationid").isin(EXCLUDED_LOCATION_IDS)
+    )
+
+    # remove invalid numeric values
+    combined = combined.filter(
+        (col("trip_distance") >= 0) &
+        (col("total_amount") >= 0)
+    )
+
+
     # add hour timestamp for zone-hour aggregation
     combined = combined.withColumn(
         "hour_ts", date_trunc("hour", col("pickup_datetime"))
@@ -224,14 +237,7 @@ def transform_fact(**context):
         pickup_demand = combined.groupBy("hour_ts", "pulocationid").agg(
             count("*").alias("demand"),
             avg("trip_distance").alias("avg_trip_distance"),
-            avg("fare_amount").alias("avg_fare"),
             avg("total_amount").alias("avg_total_amount"),
-            avg("trip_time").alias("avg_trip_time"),
-            avg("tolls_amount").alias("avg_tolls_amount"),
-            avg("tip_amount").alias("avg_tip_amount"),
-            avg("airport_fee").alias("avg_airport_fee"),
-            avg("congestion_surcharge").alias("avg_congestion_surcharge"),
-            avg("extra").alias("avg_extra"),
         )
         pickup_demand = apply_cryptographic_watermark(pickup_demand)
         print(f"  Pickup zone-hour rows: {pickup_demand.count():,}")

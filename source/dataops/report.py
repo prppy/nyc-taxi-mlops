@@ -21,14 +21,7 @@ logger = logging.getLogger(__name__)
 FACT_NUMERIC = [
     "demand",
     "avg_trip_distance",
-    "avg_fare",
     "avg_total_amount",
-    "avg_trip_time",
-    "avg_tolls_amount",
-    "avg_tip_amount",
-    "avg_airport_fee",
-    "avg_congestion_surcharge",
-    "avg_extra",
 ]
 
 FACT_CATEGORICAL = [
@@ -50,8 +43,6 @@ FALLBACK_ROW_LIMIT = 50_000
 ZERO_DISTANCE_RATE_THRESHOLD = 0.05
 # flag if total_amount exceeds this dollar value (likely outlier / data error).
 HIGH_FARE_THRESHOLD          = 500
-# flag if this share of trips has zero passenger_count (e.g. 0.10 = 10%).
-ZERO_PAX_RATE_THRESHOLD      = 0.10
 # flag any column whose null rate exceeds this share (e.g. 0.30 = 30%).
 HIGH_NULL_RATE_THRESHOLD     = 0.30
 # flag if proportion of zero-demand rows exceeds this threshold.
@@ -307,20 +298,28 @@ def _anomaly_flags(df: pd.DataFrame) -> List[str]:
         if high_demand > 0:
             flags.append(f"⚠ {high_demand:,} rows have demand > {HIGH_DEMAND_THRESHOLD} (possible outlier)")
 
-    if "avg_fare" in df.columns:
-        neg_fare = (df["avg_fare"] < 0).sum()
-        if neg_fare > 0:
-            flags.append(f"⚠ {neg_fare:,} rows have negative avg_fare")
-
     if "avg_total_amount" in df.columns:
         neg_total = (df["avg_total_amount"] < 0).sum()
         if neg_total > 0:
             flags.append(f"⚠ {neg_total:,} rows have negative avg_total_amount")
+        
+        high_total = (df["avg_total_amount"] > HIGH_FARE_THRESHOLD).sum()
+        if high_total > 0:
+            flags.append(
+                f"⚠ {high_total:,} rows have avg_total_amount > {HIGH_FARE_THRESHOLD} (possible outlier / data error)"
+            )
 
     if "avg_trip_distance" in df.columns:
         neg_distance = (df["avg_trip_distance"] < 0).sum()
         if neg_distance > 0:
             flags.append(f"⚠ {neg_distance:,} rows have negative avg_trip_distance")
+
+        zero_distance_rate = (df["avg_trip_distance"] == 0).mean()
+        if zero_distance_rate > ZERO_DISTANCE_RATE_THRESHOLD:
+            flags.append(
+                f"⚠ {zero_distance_rate:.1%} of rows have avg_trip_distance = 0 "
+                f"(threshold {ZERO_DISTANCE_RATE_THRESHOLD:.0%})"
+            )
 
     null_rates = df.isnull().mean()
     high_null = null_rates[null_rates > HIGH_NULL_RATE_THRESHOLD]
