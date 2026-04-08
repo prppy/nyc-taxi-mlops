@@ -11,7 +11,6 @@ from utils.config import (
     get_raw_file_path,
 )
 from utils.monitoring import monitor
-from dataops.transform import STANDARD_TRIP_FACT_COLUMNS
 
 # ---------- expected schemas ----------
 YELLOW_REQUIRED_COLUMNS = {
@@ -43,7 +42,40 @@ LOOKUP_REQUIRED_COLUMNS = {
     "service_zone",
 }
 
-PROCESSED_FACT_REQUIRED_COLUMNS = set(STANDARD_TRIP_FACT_COLUMNS) | {"row_fingerprint"}
+PROCESSED_PICKUP_FACT_REQUIRED_COLUMNS = {
+    "hour_ts",
+    "pulocationid",
+    "demand",
+    "avg_trip_distance",
+    "avg_fare",
+    "avg_total_amount",
+    "avg_trip_time",
+    "avg_tolls_amount",
+    "avg_tip_amount",
+    "avg_airport_fee",
+    "avg_congestion_surcharge",
+    "avg_extra",
+    "row_fingerprint",
+}
+
+PROCESSED_PAIR_FACT_REQUIRED_COLUMNS = {
+    "hour_ts",
+    "pickup_dropoff_pair",
+    "pulocationid",
+    "dolocationid",
+    "demand",
+    "avg_trip_distance",
+    "avg_fare",
+    "avg_total_amount",
+    "avg_trip_time",
+    "avg_tolls_amount",
+    "avg_tip_amount",
+    "avg_airport_fee",
+    "avg_congestion_surcharge",
+    "avg_extra",
+    "row_fingerprint",
+}
+
 PROCESSED_WEATHER_REQUIRED_COLUMNS = WEATHER_REQUIRED_COLUMNS
 PROCESSED_ZONE_REQUIRED_COLUMNS = {"location_id", "borough", "zone", "service_zone"}
 
@@ -193,34 +225,97 @@ def _check_lookup_changed(curr_path, prev_path, warnings):
             warnings.append(f"lookup: removed LocationIDs {removed[:10]}{'...' if len(removed) > 10 else ''}")
 
 
-def _processed_fact_checks(df, errors, warnings):
+def _processed_pickup_fact_checks(df, errors, warnings):
     if df.empty:
-        errors.append("processed fact_trips: empty output")
+        errors.append("processed fact_trips_pickup: empty output")
         return
 
-    missing = PROCESSED_FACT_REQUIRED_COLUMNS - set(df.columns)
+    missing = PROCESSED_PICKUP_FACT_REQUIRED_COLUMNS - set(df.columns)
     if missing:
-        errors.append(f"processed fact_trips: missing columns {sorted(missing)}")
+        errors.append(f"processed fact_trips_pickup: missing columns {sorted(missing)}")
         return
 
-    critical_cols = ["pickup_datetime", "dropoff_datetime", "pulocationid", "dolocationid"]
+    critical_cols = ["hour_ts", "pulocationid", "demand", "row_fingerprint"]
     nulls = df[critical_cols].isna().sum()
     for col, count in nulls.items():
         if count > 0:
-            errors.append(f"processed fact_trips: {count} nulls in critical column {col}")
+            errors.append(f"processed fact_trips_pickup: {count} nulls in critical column {col}")
 
-    pickup_ts = pd.to_datetime(df["pickup_datetime"], errors="coerce")
-    dropoff_ts = pd.to_datetime(df["dropoff_datetime"], errors="coerce")
-    invalid = (pickup_ts >= dropoff_ts).sum()
-    if invalid > 0:
-        errors.append(f"processed fact_trips: {invalid} rows have pickup_datetime >= dropoff_datetime")
+    df["hour_ts"] = pd.to_datetime(df["hour_ts"], errors="coerce")
+    if df["hour_ts"].isna().any():
+        errors.append("processed fact_trips_pickup: some hour_ts values could not be parsed")
 
-    bad_taxi_types = sorted(set(df["taxi_type"].dropna().unique()) - {"yellow", "fhvhv"})
-    if bad_taxi_types:
-        errors.append(f"processed fact_trips: unexpected taxi_type values {bad_taxi_types}")
+    if (pd.to_numeric(df["demand"], errors="coerce") <= 0).fillna(False).any():
+        errors.append("processed fact_trips_pickup: demand contains non-positive values")
+
+    if (pd.to_numeric(df["avg_trip_distance"], errors="coerce") < 0).fillna(False).any():
+        errors.append("processed fact_trips_pickup: avg_trip_distance has negative values")
+
+    if (pd.to_numeric(df["avg_fare"], errors="coerce") < 0).fillna(False).any():
+        warnings.append("processed fact_trips_pickup: avg_fare has negative values")
+
+    if (pd.to_numeric(df["avg_total_amount"], errors="coerce") < 0).fillna(False).any():
+        warnings.append("processed fact_trips_pickup: avg_total_amount has negative values")
+
+    dupes = df.duplicated(subset=["hour_ts", "pulocationid"]).sum()
+    if dupes > 0:
+        errors.append(f"processed fact_trips_pickup: found {dupes} duplicate (hour_ts, pulocationid) rows")
 
     if df["row_fingerprint"].isna().any():
-        errors.append("processed fact_trips: row_fingerprint contains nulls")
+        errors.append("processed fact_trips_pickup: row_fingerprint contains nulls")
+
+
+'''
+def _processed_pair_fact_checks(df, errors, warnings):
+    if df.empty:
+        errors.append("processed fact_trips_pair: empty output")
+        return
+
+    missing = PROCESSED_PAIR_FACT_REQUIRED_COLUMNS - set(df.columns)
+    if missing:
+        errors.append(f"processed fact_trips_pair: missing columns {sorted(missing)}")
+        return
+
+    critical_cols = ["hour_ts", "pickup_dropoff_pair", "pulocationid", "dolocationid", "demand", "row_fingerprint"]
+    nulls = df[critical_cols].isna().sum()
+    for col, count in nulls.items():
+        if count > 0:
+            errors.append(f"processed fact_trips_pair: {count} nulls in critical column {col}")
+
+    df["hour_ts"] = pd.to_datetime(df["hour_ts"], errors="coerce")
+    if df["hour_ts"].isna().any():
+        errors.append("processed fact_trips_pair: some hour_ts values could not be parsed")
+
+    if (pd.to_numeric(df["demand"], errors="coerce") <= 0).fillna(False).any():
+        errors.append("processed fact_trips_pair: demand contains non-positive values")
+
+    if (pd.to_numeric(df["avg_trip_distance"], errors="coerce") < 0).fillna(False).any():
+        errors.append("processed fact_trips_pair: avg_trip_distance has negative values")
+
+    if (pd.to_numeric(df["avg_fare"], errors="coerce") < 0).fillna(False).any():
+        warnings.append("processed fact_trips_pair: avg_fare has negative values")
+
+    if (pd.to_numeric(df["avg_total_amount"], errors="coerce") < 0).fillna(False).any():
+        warnings.append("processed fact_trips_pair: avg_total_amount has negative values")
+
+    dupes = df.duplicated(subset=["hour_ts", "pickup_dropoff_pair", "pulocationid", "dolocationid"]).sum()
+    if dupes > 0:
+        errors.append(f"processed fact_trips_pair: found {dupes} duplicate pair-hour rows")
+
+    expected_pair = (
+        pd.to_numeric(df["pulocationid"], errors="coerce").astype("Int64").astype(str)
+        + "_"
+        + pd.to_numeric(df["dolocationid"], errors="coerce").astype("Int64").astype(str)
+    )
+    mismatches = (df["pickup_dropoff_pair"].astype(str) != expected_pair).sum()
+    if mismatches > 0:
+        errors.append(
+            f"processed fact_trips_pair: {mismatches} rows have inconsistent pickup_dropoff_pair values"
+        )
+
+    if df["row_fingerprint"].isna().any():
+        errors.append("processed fact_trips_pair: row_fingerprint contains nulls")
+'''
 
 
 def _processed_weather_checks(df, year, month, errors, warnings):
@@ -319,17 +414,36 @@ def validate_processed(**context):
     errors = []
     warnings = []
 
-    # fact
-    fact_path = os.path.join(PROCESSED_PATH, "fact_trips", f"{year}-{month:02d}")
-    if not os.path.exists(fact_path):
-        errors.append(f"processed fact_trips missing: {fact_path}")
+    pickup_df = None
+    pair_df = None
+    weather_df = None
+    zone_df = None
+
+    # version 1: pickup-only fact
+    pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year}-{month:02d}")
+    if not os.path.exists(pickup_path):
+        errors.append(f"processed fact_trips_pickup missing: {pickup_path}")
     else:
         try:
-            fact_df = pd.read_parquet(fact_path)
-            print(f"Loaded processed fact_trips rows: {len(fact_df):,}")
-            _processed_fact_checks(fact_df, errors, warnings)
+            pickup_df = pd.read_parquet(pickup_path)
+            print(f"Loaded processed fact_trips_pickup rows: {len(pickup_df):,}")
+            _processed_pickup_fact_checks(pickup_df, errors, warnings)
         except Exception as e:
-            errors.append(f"processed fact_trips unreadable: {e}")
+            errors.append(f"processed fact_trips_pickup unreadable: {e}")
+
+    '''
+    # version 2: pickup-dropoff-pair fact
+    pair_path = os.path.join(PROCESSED_PATH, "fact_trips_pair", f"{year}-{month:02d}")
+    if not os.path.exists(pair_path):
+        errors.append(f"processed fact_trips_pair missing: {pair_path}")
+    else:
+        try:
+            pair_df = pd.read_parquet(pair_path)
+            print(f"Loaded processed fact_trips_pair rows: {len(pair_df):,}")
+            _processed_pair_fact_checks(pair_df, errors, warnings)
+        except Exception as e:
+            errors.append(f"processed fact_trips_pair unreadable: {e}")
+    '''
 
     # weather
     weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
@@ -355,21 +469,36 @@ def validate_processed(**context):
         except Exception as e:
             errors.append(f"processed dim_zone unreadable: {e}")
 
-    # cross-check processed fact IDs against processed dim_zone
-    if "fact_df" in locals() and "zone_df" in locals() and not fact_df.empty and not zone_df.empty:
+    # cross-check processed pickup fact IDs against processed dim_zone
+    if pickup_df is not None and zone_df is not None and not pickup_df.empty and not zone_df.empty:
         valid_zone_ids = set(pd.to_numeric(zone_df["location_id"], errors="coerce").dropna().astype(int).unique())
-        used_zone_ids = set(
+        pickup_zone_ids = set(
+            pd.to_numeric(pickup_df["pulocationid"], errors="coerce").dropna().astype(int).unique()
+        )
+        missing_pickup_zone_ids = sorted(pickup_zone_ids - valid_zone_ids)
+        if missing_pickup_zone_ids:
+            errors.append(
+                f"processed cross-check: fact_trips_pickup contains zone ids not present in dim_zone: "
+                f"{missing_pickup_zone_ids[:20]}{'...' if len(missing_pickup_zone_ids) > 20 else ''}"
+            )
+
+    '''
+    # cross-check processed pair fact IDs against processed dim_zone
+    if pair_df is not None and zone_df is not None and not pair_df.empty and not zone_df.empty:
+        valid_zone_ids = set(pd.to_numeric(zone_df["location_id"], errors="coerce").dropna().astype(int).unique())
+        pair_zone_ids = set(
             pd.concat([
-                pd.to_numeric(fact_df["pulocationid"], errors="coerce"),
-                pd.to_numeric(fact_df["dolocationid"], errors="coerce"),
+                pd.to_numeric(pair_df["pulocationid"], errors="coerce"),
+                pd.to_numeric(pair_df["dolocationid"], errors="coerce"),
             ]).dropna().astype(int).unique()
         )
-        missing_zone_ids = sorted(used_zone_ids - valid_zone_ids)
-        if missing_zone_ids:
+        missing_pair_zone_ids = sorted(pair_zone_ids - valid_zone_ids)
+        if missing_pair_zone_ids:
             errors.append(
-                f"processed cross-check: fact_trips contains zone ids not present in dim_zone: "
-                f"{missing_zone_ids[:20]}{'...' if len(missing_zone_ids) > 20 else ''}"
+                f"processed cross-check: fact_trips_pair contains zone ids not present in dim_zone: "
+                f"{missing_pair_zone_ids[:20]}{'...' if len(missing_pair_zone_ids) > 20 else ''}"
             )
+    '''
 
     _warn(warnings)
     _fail(errors)
