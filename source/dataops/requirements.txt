@@ -1,0 +1,11 @@
+pandas
+numpy
+pyarrow
+requests
+python-dotenv
+sqlalchemy
+psycopg2-binary
+apache-airflow-providers-postgres
+openlineage-python
+apache-airflow-providers-openlineage
+matplotlib
