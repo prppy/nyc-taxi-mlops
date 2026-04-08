@@ -11,21 +11,20 @@ from dataops.report import report_data
 
 from utils.alerting import on_failure_alert
 from utils.db import setup_tables
-from utils.config import (DAG_ID, SCHEDULE_INTERVAL, RETRY_COUNT)
+from utils.config import (DAG_ID, START_YEAR, START_MONTH, SCHEDULE_INTERVAL, RETRY_COUNT)
 
 default_args = {
     "owner": "dataops",
-    "start_date": datetime(2024, 1, 1),
+    "start_date": datetime(START_YEAR, START_MONTH, 1),
     "retries": RETRY_COUNT,
     "on_failure_callback": on_failure_alert,
-
 }
 
 with DAG(
     dag_id=DAG_ID,
     default_args=default_args,
-    schedule_interval=SCHEDULE_INTERVAL,
-    catchup=False,
+    schedule=SCHEDULE_INTERVAL,
+    catchup=False, # set this to true if you want to automate backfills
     on_failure_callback=on_failure_alert, 
     max_active_runs=1,
 ) as dag:

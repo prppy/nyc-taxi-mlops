@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, coalesce, lit, when, date_trunc, count, avg, concat_ws
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 import shutil
-from utils.config import PROCESSED_PATH, EXCLUDED_LOCATION_IDS, get_raw_file_path
+from utils.config import PROCESSED_PATH, EXCLUDED_LOCATION_IDS, get_raw_file_path, get_month_year
 from utils.monitoring import monitor
 from utils.watermark import apply_cryptographic_watermark
 
@@ -19,8 +19,9 @@ STANDARD_TRIP_FACT_COLUMNS = [
 @monitor
 def transform_fact(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     # output paths for both versions of the fact table (pickup and pair)
     pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year}-{month:02d}")
@@ -43,7 +44,7 @@ def transform_fact(**context):
     spark = (
         SparkSession.builder
         .appName("Taxi ETL Transform")
-        .master("local[*]")
+        .master("local[2]")
         .config("spark.driver.memory", "2g")
         .config("spark.executor.memory", "2g")
         .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
@@ -61,7 +62,6 @@ def transform_fact(**context):
     fhvhv_path = get_raw_file_path("fhvhv", year, month)
 
     dfs = []
-
 
     # read yellow data
     try:
@@ -240,7 +240,7 @@ def transform_fact(**context):
             avg("total_amount").alias("avg_total_amount"),
         )
         pickup_demand = apply_cryptographic_watermark(pickup_demand)
-        print(f"  Pickup zone-hour rows: {pickup_demand.count():,}")
+        # print(f"  Pickup zone-hour rows: {pickup_demand.count():,}")
         pickup_demand.write.mode("overwrite").parquet(pickup_path)
         print(f"  Saved to: {pickup_path}")
     '''
@@ -271,8 +271,9 @@ def transform_fact(**context):
 @monitor
 def transform_dim_zone(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     spark = (
         SparkSession.builder
@@ -344,8 +345,9 @@ def transform_dim_zone(**context):
 @monitor
 def transform_dim_weather(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     spark = (
         SparkSession.builder
