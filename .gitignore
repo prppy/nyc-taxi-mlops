@@ -1,17 +1,18 @@
-.env
+.DS_Store
+
 __pycache__/
 .venv/
 *.parquet
 *.csv
-
 *.crc
 _SUCCESS
-.DS_Store
+
 
 data/processed/
 data/raw/
 backups/
-jars/*.jar
 
+jars/*.jar
 source/mlops/.ipynb_checkpoints
 source/mlops/.Trash-0
+.env
