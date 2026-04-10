@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+from sqlalchemy import create_engine
 
 BASE_PATH = "data/processed"
 EDA_JOINED_PATH = os.path.join(BASE_PATH, "eda", "joined")
@@ -98,29 +99,30 @@ def add_grouped_lag_features(
     target_col: str = "demand"
 ) -> pd.DataFrame:
     df = df.copy()
+
+    df[target_col] = df[target_col].astype("float32")
     df["hour_ts"] = pd.to_datetime(df["hour_ts"])
     df = df.sort_values(group_cols + ["hour_ts"]).reset_index(drop=True)
 
-    grouped = df.groupby(group_cols, dropna=False)[target_col]
 
-    # lag features
+    grouped = df.groupby(group_cols, sort=False)
+
     for lag in [1, 2, 24, 168]:
-        df[f"{target_col}_lag_{lag}h"] = grouped.shift(lag)
+        df[f"{target_col}_lag_{lag}h"] = grouped[target_col].shift(lag)
 
-    # rolling mean features using past data only
-    shifted_col = f"_{target_col}_shifted"
-    df[shifted_col] = grouped.shift(1)
+    shifted = grouped[target_col].shift(1).fillna(0)
 
     for window in [3, 24]:
-        df[f"{target_col}_rolling_mean_{window}h"] = (
-            df.groupby(group_cols, dropna=False)[shifted_col]
-              .transform(lambda s: s.rolling(window=window, min_periods=1).mean())
+        col_name = f"{target_col}_rolling_mean_{window}h"
+
+        df[col_name] = (
+            df.groupby(group_cols)[target_col]
+            .shift(1)
+            .rolling(window=window, min_periods=1)
+            .mean()
         )
 
-    df = df.drop(columns=[shifted_col])
-
     return df
-
 
 def encode_location_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -139,13 +141,19 @@ def encode_location_features(df: pd.DataFrame) -> pd.DataFrame:
 def final_cleaning(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # keep current row target
+    # target
     df["target_demand"] = df["demand"]
 
-    # replace inf values from pct_change with NaN
+    # replace inf
     df = df.replace([np.inf, -np.inf], np.nan)
 
-    # sort for readability
+    # drop rows where critical features are missing
+    df = df.dropna(subset=["target_demand"])
+
+    # OPTIONAL: fill remaining NaNs (safe default)
+    df = df.fillna(0)
+
+    # sort
     sort_cols = [c for c in ["pulocationid", "dolocationid", "hour_ts"] if c in df.columns]
     if sort_cols:
         df = df.sort_values(sort_cols).reset_index(drop=True)
@@ -207,10 +215,54 @@ def main():
     print("=" * 60)
 
     pickup_df = load_joined_data(INPUT_PICKUP_PATH)
+
+    cols_to_keep = [
+        "hour_ts",
+        "pulocationid",
+        "demand",
+        "avg_trip_distance",
+        "avg_total_amount",
+        "temperature_mean",
+        "precipitation_sum",
+        "wind_speed_max",
+        "borough",
+        "zone",
+        "service_zone"
+    ]
+
+    pickup_df = pickup_df[cols_to_keep]
+    pickup_df = pickup_df.astype({
+        "pulocationid": "int32",
+        "demand": "float32",
+        "avg_trip_distance": "float32",
+        "avg_total_amount": "float32",
+        "temperature_mean": "float32",
+        "precipitation_sum": "float32",
+        "wind_speed_max": "float32"
+    })
     pickup_features = engineer_features(pickup_df, version="pickup")
     print_summary(pickup_features, "PICKUP")
 
     pickup_features.to_parquet(OUTPUT_PICKUP_PATH, index=False)
+
+    print("\nWriting features to Postgres...")
+
+    engine = create_engine(
+        "postgresql://airflow:airflow@airflow_postgres:5432/airflow"
+    )
+
+    pickup_features.columns = [c.lower() for c in pickup_features.columns]
+
+    pickup_features.to_sql(
+        "pickup_features",
+        engine,
+        if_exists="replace",
+        index=False,
+        chunksize=50000,
+        method="multi"
+    )
+
+    print("Saved pickup_features to Postgres")
     print(f"\nSaved: {OUTPUT_PICKUP_PATH}")
 
     """

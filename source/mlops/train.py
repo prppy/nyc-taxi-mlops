@@ -1,149 +1,166 @@
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+import numpy as np
+import random
 import os
-import pandas as pd
+import joblib
 
-BASE_PATH = "data/processed"
-FE_PATH = os.path.join(BASE_PATH, "feature_engineered")
+np.random.seed(42)
+random.seed(42)
 
-INPUT_PICKUP_PATH = os.path.join(FE_PATH, "pickup_features.parquet")
+from utils.db import load_features
+from utils.split import rolling_split
+from utils.evaluate import evaluate_all
+from utils.mlflow_utils import start_experiment, start_run, log_metrics, log_model_info
 
+from models.linear_reg import train_linear, predict_linear
+from models.xgboost import train_xgb, predict_xgb
+from models.lstm import train_lstm, create_sequences
 
-def load_feature_data(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise ValueError(f"Path does not exist: {path}")
+import mlflow
+import mlflow.sklearn
+import mlflow.tensorflow
 
-    df = pd.read_parquet(path)
-    print(f"Loaded: {path}")
-    print(f"Shape : {df.shape[0]:,} rows x {df.shape[1]:,} cols")
-    return df
-
-
-def prepare_datetime(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-
-    if "hour_ts" not in df.columns:
-        raise ValueError("Column 'hour_ts' not found in dataframe")
-
-    df["hour_ts"] = pd.to_datetime(df["hour_ts"], errors="coerce")
-    df = df.dropna(subset=["hour_ts"]).copy()
-
-    if df.empty:
-        raise ValueError("Dataframe is empty after dropping invalid hour_ts values")
-
-    df = df.sort_values("hour_ts").reset_index(drop=True)
-    df["year_month"] = df["hour_ts"].dt.to_period("M")
-
-    return df
+def get_target_month():
+    today = datetime.today()
+    target = today - relativedelta(months=1)
+    return target.strftime("%Y-%m")
 
 
-def rolling_split(
-    df: pd.DataFrame,
-    test_month: str,
-    val_months: int = 1
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """
-    Rolling time-based split.
+def get_feature_columns(df):
+    exclude_cols = {"target_demand", "hour_ts", "year_month"}
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Full feature-engineered dataset.
-    test_month : str
-        Month to test on, in 'YYYY-MM' format, eg '2025-01'.
-    val_months : int
-        Number of full months immediately before test month to use for validation.
+    numeric_cols = df.select_dtypes(include=["number", "bool"]).columns.tolist()
+    feature_cols = [c for c in numeric_cols if c not in exclude_cols]
 
-    Returns
-    -------
-    train_df, val_df, test_df
-    """
-    df = prepare_datetime(df)
+    if not feature_cols:
+        raise ValueError("No valid numeric feature columns found")
 
-    test_period = pd.Period(test_month, freq="M")
-    val_start_period = test_period - val_months
-
-    test_mask = df["year_month"] == test_period
-    val_mask = (df["year_month"] >= val_start_period) & (df["year_month"] < test_period)
-    train_mask = df["year_month"] < val_start_period
-
-    train_df = df.loc[train_mask].copy()
-    val_df = df.loc[val_mask].copy()
-    test_df = df.loc[test_mask].copy()
-
-    if train_df.empty:
-        raise ValueError(f"Train set is empty for test_month={test_month}")
-
-    if val_df.empty:
-        raise ValueError(
-            f"Validation set is empty for test_month={test_month}. "
-            f"Try reducing val_months or using a later test month."
-        )
-
-    if test_df.empty:
-        raise ValueError(
-            f"Test set is empty for test_month={test_month}. "
-            f"No rows found for that month."
-        )
-
-    return train_df, val_df, test_df
-
-
-def print_split_summary(
-    train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
-    test_df: pd.DataFrame,
-    label: str,
-    test_month: str,
-) -> None:
-    print(f"\n=== ROLLING SPLIT SUMMARY ({label}) ===")
-    print(f"Test month: {test_month}")
-
-    def _summary(name: str, split_df: pd.DataFrame) -> None:
-        min_ts = split_df["hour_ts"].min()
-        max_ts = split_df["hour_ts"].max()
-
-        print(f"\n{name}")
-        print(f"Rows      : {split_df.shape[0]:,}")
-        print(f"Time range: {min_ts} -> {max_ts}")
-
-        if "target_demand" in split_df.columns:
-            print(f"Mean target_demand: {split_df['target_demand'].mean():.3f}")
-
-    total_rows = train_df.shape[0] + val_df.shape[0] + test_df.shape[0]
-    print(f"Total rows used: {total_rows:,}")
-
-    _summary("TRAIN", train_df)
-    _summary("VAL", val_df)
-    _summary("TEST", test_df)
-
-    print("\nRow share:")
-    print(f"Train: {train_df.shape[0] / total_rows:.1%}")
-    print(f"Val  : {val_df.shape[0] / total_rows:.1%}")
-    print(f"Test : {test_df.shape[0] / total_rows:.1%}")
+    return feature_cols
 
 
 def main():
-    TEST_MONTH = "2025-01" # to update based on testing month
-    VAL_MONTHS = 1 # to update based on number of months to use for validation (immediately before test month)
 
     print("\n" + "=" * 60)
-    print("ROLLING SPLIT")
+    print("TRAINING PIPELINE")
     print("=" * 60)
 
-    pickup_df = load_feature_data(INPUT_PICKUP_PATH)
-    pickup_train, pickup_val, pickup_test = rolling_split(
-        pickup_df,
-        test_month=TEST_MONTH,
-        val_months=VAL_MONTHS,
-    )
-    print_split_summary(
-        pickup_train,
-        pickup_val,
-        pickup_test,
-        label="PICKUP",
-        test_month=TEST_MONTH,
-    )
+    TEST_MONTH = get_target_month()
+    print(f"Target month: {TEST_MONTH}")
 
-    print("\nRolling split completed.")
+    start_experiment()
+
+    df = load_features()
+
+    train_df, val_df, test_df = rolling_split(df, TEST_MONTH)
+
+    features = get_feature_columns(df)
+
+    X_train = train_df[features]
+    y_train = train_df["target_demand"]
+
+    X_val = val_df[features]
+    y_val = val_df["target_demand"]
+
+    results = {}
+    trained_models = {}
+
+    # LINEAR REGRESSION
+    with start_run("linear_regression"):
+
+        log_model_info("linear_regression")
+
+        linear_model = train_linear(X_train, y_train)
+        pred = predict_linear(linear_model, X_val)
+
+        metrics = evaluate_all(y_val, pred)
+        log_metrics(metrics)
+
+        mlflow.sklearn.log_model(linear_model, "model")
+
+        results["linear_regression"] = metrics
+        trained_models["linear_regression"] = linear_model
+
+        print("\nLinear Metrics:", metrics)
+
+    # XGBOOST
+    with start_run("xgboost"):
+
+        log_model_info("xgboost")
+
+        xgb_model = train_xgb(X_train, y_train)
+        pred = predict_xgb(xgb_model, X_val)
+
+        metrics = evaluate_all(y_val, pred)
+        log_metrics(metrics)
+
+        mlflow.sklearn.log_model(xgb_model, "model")
+
+        results["xgboost"] = metrics
+        trained_models["xgboost"] = xgb_model
+
+        print("\nXGBoost Metrics:", metrics)
+
+    # LSTM
+    try:
+        with start_run("lstm"):
+
+            log_model_info("lstm")
+
+            X_train_seq, y_train_seq = create_sequences(X_train.values, y_train.values)
+            X_val_seq, y_val_seq = create_sequences(X_val.values, y_val.values)
+
+            if len(X_train_seq) > 0 and len(X_val_seq) > 0:
+
+                lstm_model = train_lstm(X_train, y_train)
+
+                pred = lstm_model.predict(X_val_seq).flatten()
+                y_val_seq = y_val_seq[:len(pred)]
+
+                metrics = evaluate_all(y_val_seq, pred)
+                log_metrics(metrics)
+
+                mlflow.tensorflow.log_model(lstm_model, "model")
+
+                results["lstm"] = metrics
+                trained_models["lstm"] = lstm_model
+
+                print("\nLSTM Metrics:", metrics)
+
+            else:
+                print("Skipping LSTM — not enough sequence data")
+
+    except Exception as e:
+        print(f"LSTM failed: {e}")
+
+
+    # FINAL RESULTS
+    print("\n" + "=" * 60)
+    print("MODEL PERFORMANCE SUMMARY")
+    print("=" * 60)
+
+    for model, metrics in results.items():
+        print(f"\n{model.upper()}")
+        for k, v in metrics.items():
+            print(f"{k}: {v:.4f}")
+
+
+    # BEST MODEL SELECTION
+    best_model = min(results, key=lambda x: results[x]["rmse"])
+    best_rmse = results[best_model]["rmse"]
+
+    print(f"\nBest model: {best_model} (RMSE: {best_rmse:.4f})")
+
+    # SAVE BEST MODEL LOCALLY
+    os.makedirs("models", exist_ok=True)
+
+    best_model_obj = trained_models[best_model]
+
+    save_path = f"models/{best_model}.pkl"
+    joblib.dump(best_model_obj, save_path)
+
+    print(f"Saved best model locally: {save_path}")
 
 
 if __name__ == "__main__":

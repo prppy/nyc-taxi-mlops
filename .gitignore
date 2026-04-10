@@ -8,7 +8,9 @@ __pycache__/
 _SUCCESS
 .DS_Store
 
-data/processed/fact_trips/
+data/processed/
+data/raw/
+backups/
 jars/*.jar
 
 source/mlops/.ipynb_checkpoints
