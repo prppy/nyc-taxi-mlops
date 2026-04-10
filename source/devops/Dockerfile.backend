@@ -13,6 +13,6 @@ RUN apt-get update && \
 COPY source/devops/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-EXPOSE 8501
+EXPOSE 5000
 
-CMD ["streamlit", "run", "source/devops/api.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["python", "source/devops/backend/app.py"]

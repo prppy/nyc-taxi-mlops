@@ -10,7 +10,7 @@ import pandas as pd
 np.random.seed(42)
 random.seed(42)
 
-from utils.db import load_features
+from source.utils.db import load_features
 from utils.split import rolling_split
 from utils.evaluate import evaluate_all
 from utils.mlflow_utils import start_experiment, start_run, log_metrics, log_model_info
