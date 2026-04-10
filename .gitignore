@@ -16,3 +16,6 @@ jars/*.jar
 source/mlops/.ipynb_checkpoints
 source/mlops/.Trash-0
 .env
+
+mlflow.db
+mlruns/
