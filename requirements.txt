@@ -1,2 +1,3 @@
 matplotlib
 apache-airflow-providers-openlineage
+geopandas
