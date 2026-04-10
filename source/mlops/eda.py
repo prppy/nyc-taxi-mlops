@@ -354,6 +354,7 @@ def main():
     print("\nJoining dimensions...")
     pickup_joined = join_dimensions(pickup_df, zone_df, weather_df)
     pickup_joined = eda_features(pickup_joined)
+    pickup_joined["hour_ts"] = pickup_joined["hour_ts"].astype("datetime64[us]")
     
     print_summary(pickup_joined, "PICKUP")
     generate_all_plots(pickup_joined, "pickup", PLOTS_PATH)

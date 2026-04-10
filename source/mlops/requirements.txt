@@ -13,3 +13,4 @@ pyarrow
 python-dateutil
 mlflow
 tensorflow
+pyspark

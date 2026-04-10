@@ -5,6 +5,7 @@ import numpy as np
 import random
 import os
 import joblib
+import pandas as pd
 
 np.random.seed(42)
 random.seed(42)
@@ -22,6 +23,10 @@ import mlflow
 import mlflow.sklearn
 import mlflow.tensorflow
 
+
+# ======================
+# HELPERS
+# ======================
 def get_target_month():
     today = datetime.today()
     target = today - relativedelta(months=1)
@@ -40,6 +45,9 @@ def get_feature_columns(df):
     return feature_cols
 
 
+# ======================
+# MAIN
+# ======================
 def main():
 
     print("\n" + "=" * 60)
@@ -49,13 +57,15 @@ def main():
     TEST_MONTH = get_target_month()
     print(f"Target month: {TEST_MONTH}")
 
-    start_experiment()
+    # MLflow experiment
+    mlflow.set_experiment("taxi_demand_forecasting")
 
     df = load_features()
 
     train_df, val_df, test_df = rolling_split(df, TEST_MONTH)
 
-    features = get_feature_columns(df)
+    #  use TRAIN ONLY to avoid leakage
+    features = get_feature_columns(train_df)
 
     X_train = train_df[features]
     y_train = train_df["target_demand"]
@@ -63,19 +73,28 @@ def main():
     X_val = val_df[features]
     y_val = val_df["target_demand"]
 
+    X_test = test_df[features]
+    y_test = test_df["target_demand"]
+
     results = {}
     trained_models = {}
 
+    # ======================
     # LINEAR REGRESSION
-    with start_run("linear_regression"):
+    # ======================
+    with mlflow.start_run(run_name="linear_regression"):
 
-        log_model_info("linear_regression")
+        mlflow.log_params({
+            "model": "linear_regression",
+            "num_features": len(features),
+            "train_size": len(X_train)
+        })
 
         linear_model = train_linear(X_train, y_train)
         pred = predict_linear(linear_model, X_val)
 
         metrics = evaluate_all(y_val, pred)
-        log_metrics(metrics)
+        mlflow.log_metrics(metrics)
 
         mlflow.sklearn.log_model(linear_model, "model")
 
@@ -84,16 +103,22 @@ def main():
 
         print("\nLinear Metrics:", metrics)
 
+    # ======================
     # XGBOOST
-    with start_run("xgboost"):
+    # ======================
+    with mlflow.start_run(run_name="xgboost"):
 
-        log_model_info("xgboost")
+        mlflow.log_params({
+            "model": "xgboost",
+            "num_features": len(features),
+            "train_size": len(X_train)
+        })
 
         xgb_model = train_xgb(X_train, y_train)
         pred = predict_xgb(xgb_model, X_val)
 
         metrics = evaluate_all(y_val, pred)
-        log_metrics(metrics)
+        mlflow.log_metrics(metrics)
 
         mlflow.sklearn.log_model(xgb_model, "model")
 
@@ -102,24 +127,30 @@ def main():
 
         print("\nXGBoost Metrics:", metrics)
 
+    # ======================
     # LSTM
+    # ======================
     try:
-        with start_run("lstm"):
+        with mlflow.start_run(run_name="lstm"):
 
-            log_model_info("lstm")
+            mlflow.log_params({
+                "model": "lstm",
+                "num_features": len(features)
+            })
 
             X_train_seq, y_train_seq = create_sequences(X_train.values, y_train.values)
             X_val_seq, y_val_seq = create_sequences(X_val.values, y_val.values)
 
             if len(X_train_seq) > 0 and len(X_val_seq) > 0:
 
-                lstm_model = train_lstm(X_train, y_train)
+                # use sequence data
+                lstm_model = train_lstm(X_train_seq, y_train_seq)
 
                 pred = lstm_model.predict(X_val_seq).flatten()
                 y_val_seq = y_val_seq[:len(pred)]
 
                 metrics = evaluate_all(y_val_seq, pred)
-                log_metrics(metrics)
+                mlflow.log_metrics(metrics)
 
                 mlflow.tensorflow.log_model(lstm_model, "model")
 
@@ -134,8 +165,9 @@ def main():
     except Exception as e:
         print(f"LSTM failed: {e}")
 
-
-    # FINAL RESULTS
+    # ======================
+    # SUMMARY
+    # ======================
     print("\n" + "=" * 60)
     print("MODEL PERFORMANCE SUMMARY")
     print("=" * 60)
@@ -145,22 +177,51 @@ def main():
         for k, v in metrics.items():
             print(f"{k}: {v:.4f}")
 
-
+    # ======================
     # BEST MODEL SELECTION
+    # ======================
     best_model = min(results, key=lambda x: results[x]["rmse"])
     best_rmse = results[best_model]["rmse"]
 
     print(f"\nBest model: {best_model} (RMSE: {best_rmse:.4f})")
 
-    # SAVE BEST MODEL LOCALLY
+    # ======================
+    # RETRAIN ON TRAIN + VAL
+    # ======================
+    full_train = pd.concat([train_df, val_df])
+
+    X_full = full_train[features]
+    y_full = full_train["target_demand"]
+
+    if best_model == "linear_regression":
+        final_model = train_linear(X_full, y_full)
+
+    elif best_model == "xgboost":
+        final_model = train_xgb(X_full, y_full)
+
+    else:
+        final_model = trained_models[best_model]
+
+    # ======================
+    # FINAL TEST EVALUATION
+    # ======================
+    final_pred = final_model.predict(X_test)
+    test_metrics = evaluate_all(y_test, final_pred)
+
+    print("\nFINAL TEST PERFORMANCE")
+    print(test_metrics)
+
+    mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
+
+    # ======================
+    # SAVE MODEL
+    # ======================
     os.makedirs("models", exist_ok=True)
 
-    best_model_obj = trained_models[best_model]
-
     save_path = f"models/{best_model}.pkl"
-    joblib.dump(best_model_obj, save_path)
+    joblib.dump(final_model, save_path)
 
-    print(f"Saved best model locally: {save_path}")
+    print(f"\nSaved best model locally: {save_path}")
 
 
 if __name__ == "__main__":
