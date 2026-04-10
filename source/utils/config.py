@@ -21,7 +21,7 @@ BOROUGH_COORDS = {
 }
 
 # dates
-START_YEAR, START_MONTH = 2023, 1
+START_YEAR, START_MONTH = 2023, 3
 TEST_YEAR = 2025
 
 # table names
@@ -39,7 +39,7 @@ EXCLUDED_LOCATION_IDS = [264, 265]
 
 # airflow dag configs
 DAG_ID = "taxi_data_pipeline"
-SCHEDULE_INTERVAL = None
+SCHEDULE_INTERVAL = "0 0 L * *" 
 RETRY_COUNT = 0
 
 # logging
@@ -53,4 +53,10 @@ def get_processed_fact_path():
     return f"{PROCESSED_PATH}fact_demand/"
 
 def get_month_year(execution_date):
-    return execution_date.year, execution_date.month
+    from dateutil.relativedelta import relativedelta
+    target_date = execution_date - relativedelta(months=2)
+
+    year = target_date.year
+    month = target_date.month
+
+    return (year, month)
