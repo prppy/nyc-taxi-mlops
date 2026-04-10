@@ -69,3 +69,15 @@ def setup_tables():
             );
         """))
     print("Tables created successfully")
+    
+def load_features():
+    import pandas as pd
+    query = """
+    SELECT *
+    FROM pickup_features
+    """
+
+    df = pd.read_sql(query, engine)
+
+    print(f"Loaded from Postgres: {df.shape}")
+    return df

@@ -39,8 +39,8 @@ EXCLUDED_LOCATION_IDS = [264, 265]
 
 # airflow dag configs
 DAG_ID = "taxi_data_pipeline"
-SCHEDULE_INTERVAL = "0 0 L * *" 
-RETRY_COUNT = 0
+SCHEDULE_INTERVAL = "0 0 L * *" # "@monthly"   # or "@daily"
+RETRY_COUNT = 0 # TODO: set this to 1/2 for final submission
 
 # logging
 LOG_LEVEL = "INFO"

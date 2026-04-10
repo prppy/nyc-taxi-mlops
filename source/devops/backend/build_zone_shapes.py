@@ -93,7 +93,7 @@ def default_repo_root() -> Path:
 
 def parse_args() -> argparse.Namespace:
     repo_root = default_repo_root()
-    default_input = repo_root / "data" / "taxi_zones" / "taxi_zones.shp"
+    default_input = repo_root / "source" / "devops" / "frontend" / "public" / "taxi_zones" / "taxi_zones.shp"
     default_output = repo_root / "source" / "devops" / "frontend" / "src" / "data" / "zone_shapes.json"
 
     parser = argparse.ArgumentParser(

@@ -24,7 +24,7 @@ docker full shutdown
 1. Install dependency:
    - `python3 -m pip install pyshp`
 2. Run generator from repo root:
-   - `python3 source/devops/scripts/build_zone_shapes.py`
+   - `python3 source/devops/backend/build_zone_shapes.py`
 
 Optional flags:
 - `--input <path/to/taxi_zones.shp>`
@@ -39,4 +39,4 @@ Run from repo root:
 1. Build the devops image (installs from `source/devops/requirements.txt`):
    - `docker build -f source/devops/Dockerfile -t nyc-taxi-devops .`
 2. Run the generator inside that image:
-   - `docker run --rm -v "$PWD":/app -w /app nyc-taxi-devops python source/devops/scripts/build_zone_shapes.py`
+   - `docker run --rm -v "$PWD":/app -w /app nyc-taxi-devops python source/devops/backend/build_zone_shapes.py`

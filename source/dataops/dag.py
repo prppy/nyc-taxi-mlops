@@ -24,9 +24,10 @@ with DAG(
     dag_id=DAG_ID,
     default_args=default_args,
     schedule=SCHEDULE_INTERVAL,
-    catchup=False, # set this to true if you want to automate backfills
+    catchup=False, # TODO: set this to True to automate backfills for final submission
     on_failure_callback=on_failure_alert, 
     max_active_runs=1,
+    is_paused_upon_creation=False
 ) as dag:
     
     setup_task = PythonOperator(

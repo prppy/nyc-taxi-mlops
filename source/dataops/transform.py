@@ -68,7 +68,7 @@ def transform_fact(**context):
         yellow = spark.read.parquet(yellow_path) 
         yellow = yellow.withColumn("taxi_type", lit("yellow"))
         dfs.append(("yellow", yellow))
-        # print(f"Loaded yellow: {yellow_path} — {yellow.count():,} rows")
+        print(f"Loaded yellow: {yellow_path} — {yellow.count():,} rows")
     except Exception as e:
         print(f"Yellow missing: {e}")
 
@@ -77,7 +77,7 @@ def transform_fact(**context):
         fhvhv = spark.read.parquet(fhvhv_path)
         fhvhv = fhvhv.withColumn("taxi_type", lit("fhvhv"))
         dfs.append(("fhvhv", fhvhv))
-        # print(f"Loaded fhvhv: {fhvhv_path} — {fhvhv.count():,} rows")
+        print(f"Loaded fhvhv: {fhvhv_path} — {fhvhv.count():,} rows")
     except Exception as e:
         print(f"FHVHV missing: {e}")
 
