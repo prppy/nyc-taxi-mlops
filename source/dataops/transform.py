@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, coalesce, lit, when, date_trunc, count, avg, concat_ws
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 import shutil
-from utils.config import PROCESSED_PATH, get_raw_file_path
+from utils.config import PROCESSED_PATH, EXCLUDED_LOCATION_IDS, get_raw_file_path, get_month_year
 from utils.monitoring import monitor
 from utils.watermark import apply_cryptographic_watermark
 
@@ -19,8 +19,9 @@ STANDARD_TRIP_FACT_COLUMNS = [
 @monitor
 def transform_fact(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     # output paths for both versions of the fact table (pickup and pair)
     pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year}-{month:02d}")
@@ -43,7 +44,7 @@ def transform_fact(**context):
     spark = (
         SparkSession.builder
         .appName("Taxi ETL Transform")
-        .master("local[*]")
+        .master("local[2]")
         .config("spark.driver.memory", "2g")
         .config("spark.executor.memory", "2g")
         .config("spark.driver.extraClassPath", "/opt/airflow/jars/openlineage-spark-1.8.0.jar")
@@ -61,7 +62,6 @@ def transform_fact(**context):
     fhvhv_path = get_raw_file_path("fhvhv", year, month)
 
     dfs = []
-
 
     # read yellow data
     try:
@@ -213,6 +213,19 @@ def transform_fact(**context):
     .withColumn("access_a_ride_flag", col("access_a_ride_flag").cast(BooleanType())) \
     .withColumn("store_and_fwd_flag", col("store_and_fwd_flag").cast(BooleanType()))
 
+    # remove unwanted unknown location ids before aggregation
+    combined = combined.filter(
+        ~col("pulocationid").isin(EXCLUDED_LOCATION_IDS) &
+        ~col("dolocationid").isin(EXCLUDED_LOCATION_IDS)
+    )
+
+    # remove invalid numeric values
+    combined = combined.filter(
+        (col("trip_distance") >= 0) &
+        (col("total_amount") >= 0)
+    )
+
+
     # add hour timestamp for zone-hour aggregation
     combined = combined.withColumn(
         "hour_ts", date_trunc("hour", col("pickup_datetime"))
@@ -224,14 +237,7 @@ def transform_fact(**context):
         pickup_demand = combined.groupBy("hour_ts", "pulocationid").agg(
             count("*").alias("demand"),
             avg("trip_distance").alias("avg_trip_distance"),
-            avg("fare_amount").alias("avg_fare"),
             avg("total_amount").alias("avg_total_amount"),
-            avg("trip_time").alias("avg_trip_time"),
-            avg("tolls_amount").alias("avg_tolls_amount"),
-            avg("tip_amount").alias("avg_tip_amount"),
-            avg("airport_fee").alias("avg_airport_fee"),
-            avg("congestion_surcharge").alias("avg_congestion_surcharge"),
-            avg("extra").alias("avg_extra"),
         )
         pickup_demand = apply_cryptographic_watermark(pickup_demand)
         # print(f"  Pickup zone-hour rows: {pickup_demand.count():,}")
@@ -265,8 +271,9 @@ def transform_fact(**context):
 @monitor
 def transform_dim_zone(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     spark = (
         SparkSession.builder
@@ -338,8 +345,9 @@ def transform_dim_zone(**context):
 @monitor
 def transform_dim_weather(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     spark = (
         SparkSession.builder

@@ -6,7 +6,12 @@ __pycache__/
 *.csv
 *.crc
 _SUCCESS
-data/processed/fact_trips/
+
+
+data/processed/
+data/raw/
+backups/
+
 jars/*.jar
 source/mlops/.ipynb_checkpoints
 source/mlops/.Trash-0

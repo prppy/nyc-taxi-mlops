@@ -1,266 +1,284 @@
 import os
-import pandas as pd
 import numpy as np
-
-pd.set_option("display.max_columns", None)
-pd.set_option("display.max_rows", 100)
+import pandas as pd
+from sqlalchemy import create_engine
 
 BASE_PATH = "data/processed"
-INPUT_PATH = os.path.join(BASE_PATH, "eda_joined.parquet")
-OUTPUT_PATH = os.path.join(BASE_PATH, "fe_cleaned.parquet")
-OUTPUT_PICKUP_PATH = os.path.join(BASE_PATH, "feature_engineered_pickup.parquet")
-OUTPUT_PAIR_PATH   = os.path.join(BASE_PATH, "feature_engineered_pickup_dropoff_pair.parquet")
+EDA_JOINED_PATH = os.path.join(BASE_PATH, "eda", "joined")
 
-def load_data(input_path: str):
-    if not os.path.exists(input_path):
-        raise FileNotFoundError(f"File not found: {input_path}")
-    df = pd.read_parquet(input_path)
-    print(f"Loaded data from {input_path}")
-    print(f"Shape: {df.shape}")
+INPUT_PICKUP_PATH = os.path.join(EDA_JOINED_PATH, "pickup.parquet")
+# INPUT_PAIR_PATH = os.path.join(EDA_JOINED_PATH, "pair.parquet")
+
+OUTPUT_PATH = os.path.join(BASE_PATH, "feature_engineered")
+os.makedirs(OUTPUT_PATH, exist_ok=True)
+
+OUTPUT_PICKUP_PATH = os.path.join(OUTPUT_PATH, "pickup_features.parquet")
+# OUTPUT_PAIR_PATH = os.path.join(OUTPUT_PATH, "pair_features.parquet")
+
+
+def load_joined_data(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        raise ValueError(f"Path does not exist: {path}")
+
+    df = pd.read_parquet(path)
+    print(f"Loaded: {path}")
+    print(f"Shape : {df.shape[0]:,} rows x {df.shape[1]:,} cols")
     return df
 
-def ensure_datetime_columns(df):
-    df = df.copy()
-    df["pickup_datetime"] = pd.to_datetime(df["pickup_datetime"], errors="coerce")
-    df["dropoff_datetime"] = pd.to_datetime(df["dropoff_datetime"], errors="coerce")
-    return df
 
-def engineer_time_features(df):
+def prepare_base_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df["hour"] = df["pickup_datetime"].dt.hour
-    df["day_of_week"] = df["pickup_datetime"].dt.dayofweek
-    df["month"] = df["pickup_datetime"].dt.month
-    df["day"] = df["pickup_datetime"].dt.day
-    df["is_weekend"] = df["day_of_week"].isin([5, 6]).astype(int)
-    df["is_peak_hour"] = df["hour"].isin([17, 18, 19]).astype(int)
 
-    # for cyclical encoding of hour and day of week
+    df["hour_ts"] = pd.to_datetime(df["hour_ts"], errors="coerce")
+    df = df.dropna(subset=["hour_ts"]).copy()
+
+    # temporal fields
+    df["hour"] = df["hour_ts"].dt.hour
+    df["day_of_week"] = (df["hour_ts"].dt.dayofweek + 1) % 7   # 0=Sun, 1=Mon, ..., 6=Sat
+    df["month"] = df["hour_ts"].dt.month
+    df["day"] = df["hour_ts"].dt.day
+    df["weekofyear"] = df["hour_ts"].dt.isocalendar().week.astype(int)
+    df["is_weekend"] = df["day_of_week"].isin([0, 6]).astype(int)
+
+    # Cyclical encoding
     df["hour_sin"] = np.sin(2 * np.pi * df["hour"] / 24)
     df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24)
-    df["dow_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
-    df["dow_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
+
+    df["dayofweek_sin"] = np.sin(2 * np.pi * df["day_of_week"] / 7)
+    df["dayofweek_cos"] = np.cos(2 * np.pi * df["day_of_week"] / 7)
+
+    df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12)
+    df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12)
+
+    # Time buckets
+    df["is_peak_hour"] = df["hour"].isin([17, 18, 19]).astype(int)
+    df["is_night"] = df["hour"].isin([0, 1, 2, 3, 4, 5]).astype(int)
 
     return df
 
-def engineer_trip_features(df):
-    df = df.copy()
-    df["trip_duration_min"] = (
-        df["dropoff_datetime"] - df["pickup_datetime"]
-    ).dt.total_seconds() / 60
-    df["speed_mph"] = df["trip_distance"] / (df["trip_duration_min"] / 60)
-    df["speed_mph"] = df["speed_mph"].replace([np.inf, -np.inf], np.nan) # to handle if trip_duration_min is 0
-    return df
 
-def engineer_weather_features(df: pd.DataFrame) -> pd.DataFrame:
+def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
     if "precipitation_sum" in df.columns:
-        df["is_raining"] = (df["precipitation_sum"] > 0).astype(int)
+        df["precipitation_sum"] = pd.to_numeric(df["precipitation_sum"], errors="coerce").fillna(0)
+        df["is_rainy"] = (df["precipitation_sum"] > 0).astype(int)
+        df["is_heavy_rain"] = (df["precipitation_sum"] >= 10).astype(int)
+    else:
+        df["is_rainy"] = 0
+        df["is_heavy_rain"] = 0
+
     if "temperature_mean" in df.columns:
-        df["extreme_weather_flag"] = (
-            (df["temperature_mean"] < 0) |
-            (df["temperature_mean"] > 30) |
-            (df["precipitation_sum"] > 10)
-        ).astype(int)
+        df["temperature_mean"] = pd.to_numeric(df["temperature_mean"], errors="coerce")
+
+        # fill by timestamp first — all boroughs share same temp at a given hour
+        df["temperature_mean"] = df.groupby("hour_ts")["temperature_mean"].transform(
+            lambda x: x.fillna(x.median())
+        )
+
+        # fallback for any remaining NaNs
+        df["temperature_mean"] = df["temperature_mean"].fillna(df["temperature_mean"].median())
+
+        df["is_cold"] = (df["temperature_mean"] < 5).astype(int)
+        df["is_hot"] = (df["temperature_mean"] > 25).astype(int)
+    else:
+        df["temperature_mean"] = np.nan
+        df["is_cold"] = 0
+        df["is_hot"] = 0
+
+    df["extreme_weather_flag"] = (
+        df["is_cold"] | df["is_hot"] | df["is_heavy_rain"]
+    ).astype(int)
+
     return df
 
-def engineer_interaction_features(df):
+
+def add_grouped_lag_features(
+    df: pd.DataFrame,
+    group_cols: list[str],
+    target_col: str = "demand"
+) -> pd.DataFrame:
     df = df.copy()
-    if "is_raining" in df.columns and "is_peak_hour" in df.columns:
-        df["rain_peak_interaction"] = df["is_raining"] * df["is_peak_hour"]
+
+    df[target_col] = df[target_col].astype("float32")
+    df["hour_ts"] = pd.to_datetime(df["hour_ts"])
+    df = df.sort_values(group_cols + ["hour_ts"]).reset_index(drop=True)
+
+
+    grouped = df.groupby(group_cols, sort=False)
+
+    for lag in [1, 2, 24, 168]:
+        df[f"{target_col}_lag_{lag}h"] = grouped[target_col].shift(lag)
+
+    shifted = grouped[target_col].shift(1).fillna(0)
+
+    for window in [3, 24]:
+        col_name = f"{target_col}_rolling_mean_{window}h"
+
+        df[col_name] = (
+            df.groupby(group_cols)[target_col]
+            .shift(1)
+            .rolling(window=window, min_periods=1)
+            .mean()
+        )
+
     return df
 
-# will add a clean_data function later on after EDA is completed 
-'''
-def clean_trip_data(df: pd.DataFrame) -> pd.DataFrame:
+def encode_location_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    initial_rows = len(df)
-    df = df[
-        (df["trip_distance"] > 0) &
-        (df["trip_distance"] < 50) &
-        (df["trip_duration_min"] > 0) &
-        (df["trip_duration_min"] < 300) &
-        (df["speed_mph"] > 0) &
-        (df["speed_mph"] < 100)
-    ]
-    removed_rows = initial_rows - len(df)
 
-    print("\n=== CLEANING SUMMARY ===")
-    print(f"Rows before cleaning: {initial_rows:,}")
-    print(f"Rows after cleaning:  {len(df):,}")
-    print(f"Rows removed:         {removed_rows:,}")
-    print(f"Percentage removed:   {(removed_rows / initial_rows) * 100:.2f}%")
-    return df
-'''
+    if "borough" in df.columns:
+        borough_dummies = pd.get_dummies(df["borough"], prefix="borough")
+        df = pd.concat([df, borough_dummies], axis=1)
 
-# version 1: by pickup zone only
-def aggregate_pickup_features(df):
-    df = df.copy()
-    # create hour-level timestamp
-    df["hour_ts"] = df["pickup_datetime"].dt.floor("h")
+    if "service_zone" in df.columns:
+        service_zone_dummies = pd.get_dummies(df["service_zone"], prefix="service_zone")
+        df = pd.concat([df, service_zone_dummies], axis=1)
 
-    # aggregating numerical features by zone + hour
-    agg_dict = {
-        "trip_distance": "mean",
-        "fare_amount": "mean",
-        "temperature_mean": "mean",
-        "precipitation_sum": "mean",
-        "hour": "first",
-        "day_of_week": "first",
-        "month": "first",
-        "hour_sin": "first",
-        "hour_cos": "first",
-        "dow_sin": "first",
-        "dow_cos": "first",
-        "is_weekend": "first",
-        "is_peak_hour": "first",
-        "borough": "first"
-    }
-    if "extreme_weather_flag" in df.columns:
-        agg_dict["extreme_weather_flag"] = "max"
-    if "is_raining" in df.columns:
-        agg_dict["is_raining"] = "max"
-    if "rain_peak_interaction" in df.columns:
-        agg_dict["rain_peak_interaction"] = "max"
-
-    # group by pickup + hour
-    pickup_hour_df = df.groupby(["pulocationid", "hour_ts"]).agg(agg_dict).reset_index()
-
-    # create target variable demand 
-    demand_counts = df.groupby(["pulocationid", "hour_ts"]).size().reset_index(name="demand")
-    pickup_hour_df = pickup_hour_df.merge(demand_counts, on=["pulocationid", "hour_ts"], how="left")
-
-    pickup_hour_df = pickup_hour_df.rename(columns={
-        "pulocationid": "pickup_zone_id",
-        "trip_distance": "avg_trip_distance",
-        "fare_amount": "avg_fare",
-        "temperature_mean": "temperature",
-        "precipitation_sum": "rainfall"
-    })
-
-    print("\n=== ZONE-HOUR AGGREGATION (PICKUP) SUMMARY ===")
-    print(f"Shape: {pickup_hour_df.shape}")
-    return pickup_hour_df
-
-# version 2: by pickup-dropoff pair 
-def aggregate_pair_features(df):
-    df = df.copy()
-    df["hour_ts"] = df["pickup_datetime"].dt.floor("h")
-    df["pickup_dropoff_pair"] = (
-        df["pulocationid"].astype(str) + "_" + df["dolocationid"].astype(str)
-    )
- 
-    agg_dict = {
-        "trip_distance": "mean",
-        "fare_amount": "mean",
-        "temperature_mean": "mean",
-        "precipitation_sum": "mean",
-        "hour": "first",
-        "day_of_week": "first",
-        "month": "first",
-        "hour_sin": "first",
-        "hour_cos": "first",
-        "dow_sin": "first",
-        "dow_cos": "first",
-        "is_weekend": "first",
-        "is_peak_hour": "first",
-        "borough": "first",
-        "pulocationid": "first",
-        "dolocationid": "first",
-    }
-    if "extreme_weather_flag" in df.columns:
-        agg_dict["extreme_weather_flag"] = "max"
-    if "is_raining" in df.columns:
-        agg_dict["is_raining"] = "max"
-    if "rain_peak_interaction" in df.columns:
-        agg_dict["rain_peak_interaction"] = "max"
- 
-    pair_hour_df = df.groupby(["pickup_dropoff_pair", "hour_ts"]).agg(agg_dict).reset_index()
- 
-    demand_counts = df.groupby(["pickup_dropoff_pair", "hour_ts"]).size().reset_index(name="demand")
-    pair_hour_df = pair_hour_df.merge(demand_counts, on=["pickup_dropoff_pair", "hour_ts"], how="left")
- 
-    pair_hour_df = pair_hour_df.rename(columns={
-        "pulocationid": "pickup_zone_id",
-        "dolocationid": "dropoff_zone_id",
-        "trip_distance": "avg_trip_distance",
-        "fare_amount": "avg_fare",
-        "temperature_mean": "temperature",
-        "precipitation_sum": "rainfall",
-    })
- 
-    print("\n=== ZONE-HOUR AGGREGATION (PICKUP-DROPOFF PAIR) AGGREGATION ===")
-    print(f"Shape: {pair_hour_df.shape}")
-    print(f"Unique pairs: {pair_hour_df['pickup_dropoff_pair'].nunique():,}")
-    return pair_hour_df
-
-def engineer_lag_features(df, group_col):
-    df = df.copy()
-    df = df.sort_values([group_col, "hour_ts"])
-    df["demand_lag_1h"]  = df.groupby(group_col)["demand"].shift(1)
-    df["demand_lag_24h"] = df.groupby(group_col)["demand"].shift(24)
-    df["demand_lag_168h"] = df.groupby(group_col)["demand"].shift(168)
-    df["rolling_mean_7d"] = df.groupby(group_col)["demand"].transform(
-        lambda x: x.shift(1).rolling(24 * 7, min_periods=24).mean()
-    )
     return df
 
-def handle_missing_lag_values(df):
+
+def final_cleaning(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    initial_rows = len(df)
-    df = df.dropna(subset=["demand_lag_1h", "demand_lag_24h", "demand_lag_168h", "rolling_mean_7d"])
-    removed_rows = initial_rows - len(df)
-    print("\n=== LAG FEATURE SUMMARY ===")
-    print(f"Rows before dropping lag nulls: {initial_rows:,}")
-    print(f"Rows after dropping lag nulls: {len(df):,}")
-    print(f"Rows removed: {removed_rows:,}")
+
+    # target
+    df["target_demand"] = df["demand"]
+
+    # replace inf
+    df = df.replace([np.inf, -np.inf], np.nan)
+
+    # drop rows where critical features are missing
+    df = df.dropna(subset=["target_demand"])
+
+    # OPTIONAL: fill remaining NaNs (safe default)
+    df = df.fillna(0)
+
+    # sort
+    sort_cols = [c for c in ["pulocationid", "dolocationid", "hour_ts"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols).reset_index(drop=True)
+
     return df
 
-def print_summary_statistics(df, label):
+
+def engineer_features(df: pd.DataFrame, version: str = "pickup") -> pd.DataFrame:
+    df = df.copy()
+    
+    # drop lineage / audit-only columns before feature creation
+    cols_to_drop = ["row_fingerprint"]
+    existing_cols_to_drop = [c for c in cols_to_drop if c in df.columns]
+    if existing_cols_to_drop:
+        df = df.drop(columns=existing_cols_to_drop)
+        
+    df = prepare_base_features(df)
+    df = add_weather_features(df)
+
+    if version == "pickup":
+        group_cols = ["pulocationid"]
+    elif version == "pair":
+        group_cols = ["pulocationid", "dolocationid"]
+    else:
+        raise ValueError("version must be either 'pickup' or 'pair'")
+
+    df = add_grouped_lag_features(df, group_cols=group_cols, target_col="demand")
+    df = encode_location_features(df)
+    df = final_cleaning(df)
+
+    return df
+
+
+def print_summary(df: pd.DataFrame, label: str) -> None:
     print(f"\n=== FEATURE ENGINEERING SUMMARY ({label}) ===")
-    print(f"Final shape: {df.shape}")
-    print(f"Columns: {df.columns.tolist()}")
-    numeric_cols = ["demand", "avg_trip_distance", "avg_fare", "temperature",
-                    "rainfall", "demand_lag_1h", "demand_lag_24h", "rolling_mean_7d"]
-    existing = [c for c in numeric_cols if c in df.columns]
-    print(f"\nNumeric summary:")
-    print(df[existing].describe())
+    print(f"Shape   : {df.shape[0]:,} rows x {df.shape[1]:,} cols")
+    print(f"Columns : {list(df.columns)}")
 
-def save_data(df: pd.DataFrame, output_path: str) -> None:
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    df.to_parquet(output_path, index=False)
-    print(f"Saved to: {output_path}")
+    key_cols = [
+        "target_demand",
+        "demand_lag_1h",
+        "demand_lag_24h",
+        "demand_rolling_mean_24h",
+        "avg_trip_distance",
+        "avg_total_amount",
+        "temperature_mean",
+        "precipitation_sum",
+    ]
+    existing = [c for c in key_cols if c in df.columns]
+
+    if existing:
+        print("\nNumeric summary:")
+        print(df[existing].describe())
 
 
 def main():
-    # 1. load data
-    df = load_data(INPUT_PATH)
+    print("\n" + "=" * 60)
+    print("FEATURE ENGINEERING - VERSION 1: PICKUP ZONE")
+    print("=" * 60)
 
-    # 2. ensure datetime types
-    df = ensure_datetime_columns(df)
+    pickup_df = load_joined_data(INPUT_PICKUP_PATH)
 
-    # 3. feature engineering
-    df = engineer_time_features(df)
-    df = engineer_trip_features(df)
-    df = engineer_weather_features(df)
-    df = engineer_interaction_features(df)
+    cols_to_keep = [
+        "hour_ts",
+        "pulocationid",
+        "demand",
+        "avg_trip_distance",
+        "avg_total_amount",
+        "temperature_mean",
+        "precipitation_sum",
+        "wind_speed_max",
+        "borough",
+        "zone",
+        "service_zone"
+    ]
 
-    # 4. clean anomalies based on EDA findings
-    # df = clean_trip_data(df)
+    pickup_df = pickup_df[cols_to_keep]
+    pickup_df = pickup_df.astype({
+        "pulocationid": "int32",
+        "demand": "float32",
+        "avg_trip_distance": "float32",
+        "avg_total_amount": "float32",
+        "temperature_mean": "float32",
+        "precipitation_sum": "float32",
+        "wind_speed_max": "float32"
+    })
+    pickup_features = engineer_features(pickup_df, version="pickup")
+    print_summary(pickup_features, "PICKUP")
 
-    # handle version 1: pickup only
-    pickup_df = aggregate_pickup_features(df)
-    pickup_df = engineer_lag_features(pickup_df, group_col="pickup_zone_id")
-    pickup_df = handle_missing_lag_values(pickup_df)
-    print_summary_statistics(pickup_df, "PICKUP")
-    save_data(pickup_df, OUTPUT_PICKUP_PATH)
+    pickup_features.to_parquet(OUTPUT_PICKUP_PATH, index=False)
 
-    # handle version 2: pickup-dropoff pair
-    pair_df = aggregate_pair_features(df)
-    pair_df = engineer_lag_features(pair_df, group_col="pickup_dropoff_pair")
-    pair_df = handle_missing_lag_values(pair_df)
-    print_summary_statistics(pair_df, "PICKUP-DROPOFF PAIR")
-    save_data(pair_df, OUTPUT_PAIR_PATH)
+    print("\nWriting features to Postgres...")
 
+    engine = create_engine(
+        "postgresql://airflow:airflow@airflow_postgres:5432/airflow"
+    )
+
+    pickup_features.columns = [c.lower() for c in pickup_features.columns]
+
+    pickup_features.to_sql(
+        "pickup_features",
+        engine,
+        if_exists="replace",
+        index=False,
+        chunksize=50000,
+        method="multi"
+    )
+
+    print("Saved pickup_features to Postgres")
+    print(f"\nSaved: {OUTPUT_PICKUP_PATH}")
+
+    """
+    print("\n" + "=" * 60)
+    print("FEATURE ENGINEERING - VERSION 2: PICKUP-DROPOFF PAIR")
+    print("=" * 60)
+
+    pair_df = load_joined_data(INPUT_PAIR_PATH)
+    pair_features = engineer_features(pair_df, version="pair")
+    print_summary(pair_features, "PICKUP-DROPOFF PAIR")
+
+    pair_features.to_parquet(OUTPUT_PAIR_PATH, index=False)
+    print(f"\nSaved: {OUTPUT_PAIR_PATH}")
+    """
+
+    print("\nFeature engineering completed.")
 
 if __name__ == "__main__":
     main()

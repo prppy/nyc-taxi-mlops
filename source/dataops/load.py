@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from utils.config import PROCESSED_PATH
+from utils.config import PROCESSED_PATH, get_month_year
 from utils.db import engine
 from utils.monitoring import monitor
 import logging
@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 @monitor
 def load_data(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     logger.info(f"Starting load for {year}-{month:02d}")
 

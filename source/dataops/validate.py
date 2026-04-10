@@ -9,6 +9,7 @@ from utils.config import (
     DATASETS,
     BOROUGH_COORDS,
     get_raw_file_path,
+    get_month_year
 )
 from utils.monitoring import monitor
 
@@ -47,14 +48,7 @@ PROCESSED_PICKUP_FACT_REQUIRED_COLUMNS = {
     "pulocationid",
     "demand",
     "avg_trip_distance",
-    "avg_fare",
     "avg_total_amount",
-    "avg_trip_time",
-    "avg_tolls_amount",
-    "avg_tip_amount",
-    "avg_airport_fee",
-    "avg_congestion_surcharge",
-    "avg_extra",
     "row_fingerprint",
 }
 
@@ -65,14 +59,7 @@ PROCESSED_PAIR_FACT_REQUIRED_COLUMNS = {
     "dolocationid",
     "demand",
     "avg_trip_distance",
-    "avg_fare",
     "avg_total_amount",
-    "avg_trip_time",
-    "avg_tolls_amount",
-    "avg_tip_amount",
-    "avg_airport_fee",
-    "avg_congestion_surcharge",
-    "avg_extra",
     "row_fingerprint",
 }
 
@@ -251,9 +238,6 @@ def _processed_pickup_fact_checks(df, errors, warnings):
     if (pd.to_numeric(df["avg_trip_distance"], errors="coerce") < 0).fillna(False).any():
         errors.append("processed fact_trips_pickup: avg_trip_distance has negative values")
 
-    if (pd.to_numeric(df["avg_fare"], errors="coerce") < 0).fillna(False).any():
-        warnings.append("processed fact_trips_pickup: avg_fare has negative values")
-
     if (pd.to_numeric(df["avg_total_amount"], errors="coerce") < 0).fillna(False).any():
         warnings.append("processed fact_trips_pickup: avg_total_amount has negative values")
 
@@ -291,9 +275,6 @@ def _processed_pair_fact_checks(df, errors, warnings):
 
     if (pd.to_numeric(df["avg_trip_distance"], errors="coerce") < 0).fillna(False).any():
         errors.append("processed fact_trips_pair: avg_trip_distance has negative values")
-
-    if (pd.to_numeric(df["avg_fare"], errors="coerce") < 0).fillna(False).any():
-        warnings.append("processed fact_trips_pair: avg_fare has negative values")
 
     if (pd.to_numeric(df["avg_total_amount"], errors="coerce") < 0).fillna(False).any():
         warnings.append("processed fact_trips_pair: avg_total_amount has negative values")
@@ -355,8 +336,9 @@ def _processed_zone_checks(df, errors, warnings):
 @monitor
 def validate_raw(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     errors = []
     warnings = []
@@ -408,8 +390,9 @@ def validate_raw(**context):
 @monitor
 def validate_processed(**context):
     execution_date = context["execution_date"]
-    year = execution_date.year
-    month = execution_date.month
+    year, month = get_month_year(execution_date)
+    # year = execution_date.year
+    # month = execution_date.month
 
     errors = []
     warnings = []
