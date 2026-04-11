@@ -353,8 +353,12 @@ def load_fact_sample(period: str) -> pd.DataFrame:
         return pd.read_sql(
             f"""
             SELECT {cols}
-            FROM fact_trips_pickup TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
-            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
+            FROM (
+                SELECT {cols}
+                FROM fact_trips_pickup
+                WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
+            ) monthly_data
+            TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
             LIMIT {SAMPLE_ROW_LIMIT}
             """,
             engine,
