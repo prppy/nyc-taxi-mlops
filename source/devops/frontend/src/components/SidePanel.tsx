@@ -329,8 +329,8 @@ const STYLES: Record<string, CSSProperties> = {
   },
 
   weatherTile: {
-    background: `linear-gradient(135deg, ${THEME.surface} 0%, #eef3fb 100%)`,
-    border: `1px solid ${THEME.accentDark}`,
+    background: THEME.surface,
+    border: `1px solid ${THEME.grayZone}`,
     borderRadius: 10,
     padding: "10px 12px",
     display: "flex",
