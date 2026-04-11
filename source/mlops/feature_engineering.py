@@ -3,7 +3,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col, hour, dayofweek, month, dayofmonth,
     weekofyear, sin, cos, when,
-    lag, avg, coalesce
+    lag, avg
 )
 from pyspark.sql.window import Window
 from pyspark.sql.types import DoubleType
