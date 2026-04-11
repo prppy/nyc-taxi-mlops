@@ -438,7 +438,7 @@ const STYLES: Record<string, CSSProperties> = {
   },
   rankTop: {
     background: THEME.accentLight,
-    border: `1px solid ${THEME.accentMid}`,
+    border: `1px solid ${THEME.accentDark}`,
     color: "black",
   },
   zoneInfo: {
