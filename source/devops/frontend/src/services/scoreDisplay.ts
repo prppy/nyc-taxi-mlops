@@ -1,5 +1,8 @@
 import {THEME} from "../constants/theme"
 
+// utils that DETERMINE heatmap color (& intensity) according to score
+
+// make sure score always fall between [0, 1]
 export function clampDemandScore(score: number): number {
   if (Number.isNaN(score)) return 0;
   return Math.min(1, Math.max(0, score));

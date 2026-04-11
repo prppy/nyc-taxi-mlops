@@ -302,7 +302,13 @@ export function ZoneMap({
                         prediction,
                         locked,
                         isIncluded,
-                      });
+                        selected,
+                      }); // pass selected
+
+                const effectiveFill =
+                  !hasPredictions && isHovered && !selected
+                    ? THEME.grayZoneHover // hover = exactly same color as selected
+                    : fill;
 
                 const fillOpacity = zonePolygonFillOpacityWithHover(
                   zonePolygonFillOpacity({
@@ -311,7 +317,7 @@ export function ZoneMap({
                     isIncluded,
                     selected,
                   }),
-                  isHovered,
+                  isHovered && !hasPredictions, // no hover effect after forecast
                 );
 
                 const strokeColor = selected
@@ -326,7 +332,7 @@ export function ZoneMap({
                   <polygon
                     key={`${zone.id}-${idx}`}
                     points={ring.map(pointToSvg).join(" ")}
-                    fill={fill}
+                    fill={effectiveFill}
                     fillOpacity={fillOpacity}
                     stroke={strokeColor}
                     strokeWidth={strokeWidth}

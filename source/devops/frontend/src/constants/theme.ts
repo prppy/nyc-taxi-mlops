@@ -19,6 +19,7 @@ export const THEME = {
   surface: "#f8fafc",
   inputBg: "#ffffff",
   grayZone: "#c8d4e6",
+  grayZoneHover: "#8fa8c8",
   disabledZone: "#e3eaf4",
   selectedStroke:LIGHTER_TAXI_BLUE,
   zoneStroke: "#9eb2cf",
