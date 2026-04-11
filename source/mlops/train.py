@@ -1,228 +1,182 @@
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
-
-import numpy as np
-import random
-import os
-import joblib
 import pandas as pd
+from sqlalchemy import create_engine
 
-np.random.seed(42)
-random.seed(42)
+from dotenv import load_dotenv
+import os
 
-from source.utils.db import load_features
-from utils.split import rolling_split
-from utils.evaluate import evaluate_all
-from utils.mlflow_utils import start_experiment, start_run, log_metrics, log_model_info
-
-from models.linear_reg import train_linear, predict_linear
-from models.xgboost import train_xgb, predict_xgb
-from models.lstm import train_lstm, create_sequences
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
 import mlflow
 import mlflow.sklearn
-import mlflow.tensorflow
+import joblib
+import numpy as np
 
+## !! RUN OUTSIDE OF DOCKER. RUN IN LOCAL !!
 
-# ======================
-# HELPERS
-# ======================
-def get_target_month():
-    today = datetime.today()
-    target = today - relativedelta(months=1)
-    return target.strftime("%Y-%m")
-
-
-def get_feature_columns(df):
-    exclude_cols = {"target_demand", "hour_ts", "year_month"}
-
-    numeric_cols = df.select_dtypes(include=["number", "bool"]).columns.tolist()
-    feature_cols = [c for c in numeric_cols if c not in exclude_cols]
-
-    if not feature_cols:
-        raise ValueError("No valid numeric feature columns found")
-
-    return feature_cols
-
-
-# ======================
-# MAIN
-# ======================
 def main():
+    load_dotenv()
+    DATABASE_URL = os.getenv("DATABASE_URL2")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL not found in .env")
 
-    print("\n" + "=" * 60)
-    print("TRAINING PIPELINE")
-    print("=" * 60)
+    mlflow.set_experiment("nyc_taxi_training")
 
-    TEST_MONTH = get_target_month()
-    print(f"Target month: {TEST_MONTH}")
+    print("\n=== LOADING DATA ===")
 
-    # MLflow experiment
-    mlflow.set_experiment("taxi_demand_forecasting")
+    engine = create_engine(DATABASE_URL)
+    df = pd.read_sql("SELECT * FROM pickup_features", engine)
+    print("Data shape:", df.shape)
 
-    df = load_features()
+    # Time-based split (70% train, 15% val, 15% test)
+    print("\n=== SPLITTING DATA ===")
+    df = df.sort_values("hour_ts").reset_index(drop=True)
+    n = len(df)
 
-    train_df, val_df, test_df = rolling_split(df, TEST_MONTH)
+    train_end = int(n * 0.7)
+    val_end = int(n * 0.85)
 
-    #  use TRAIN ONLY to avoid leakage
-    features = get_feature_columns(train_df)
+    train = df.iloc[:train_end]
+    val = df.iloc[train_end:val_end]
+    test = df.iloc[val_end:]
 
-    X_train = train_df[features]
-    y_train = train_df["target_demand"]
+    print("Train:", train.shape)
+    print("Val:", val.shape)
+    print("Test:", test.shape)
 
-    X_val = val_df[features]
-    y_val = val_df["target_demand"]
+    # Features and target
+    exclude = ["hour_ts", "target_demand"]
+    feature_cols = [c for c in df.columns if c not in exclude]
 
-    X_test = test_df[features]
-    y_test = test_df["target_demand"]
+    X_train = train[feature_cols]
+    y_train = train["target_demand"]
 
+    X_val = val[feature_cols]
+    y_val = val["target_demand"]
+
+    X_test = test[feature_cols]
+    y_test = test["target_demand"]
+
+
+    # Models
+    models = {
+        "linear_regression": LinearRegression(),
+        "random_forest": RandomForestRegressor(n_estimators=50, max_depth=8, random_state=42),
+        "gbt": GradientBoostingRegressor(n_estimators=50, max_depth=5)
+    }
+
+    # Model Training Loop
     results = {}
-    trained_models = {}
 
-    # ======================
-    # LINEAR REGRESSION
-    # ======================
-    with mlflow.start_run(run_name="linear_regression"):
+    for name, model in models.items():
 
-        mlflow.log_params({
-            "model": "linear_regression",
-            "num_features": len(features),
-            "train_size": len(X_train)
-        })
+        print(f"\n--- {name.upper()} ---")
 
-        linear_model = train_linear(X_train, y_train)
-        pred = predict_linear(linear_model, X_val)
+        # Start MLflow run
+        with mlflow.start_run(run_name=name):
 
-        metrics = evaluate_all(y_val, pred)
-        mlflow.log_metrics(metrics)
+            model.fit(X_train, y_train)
 
-        mlflow.sklearn.log_model(linear_model, "model")
+            val_pred = model.predict(X_val)
+            test_pred = model.predict(X_test)
 
-        results["linear_regression"] = metrics
-        trained_models["linear_regression"] = linear_model
+            # === METRICS ===
 
-        print("\nLinear Metrics:", metrics)
+            # RMSE
+            val_rmse = np.sqrt(mean_squared_error(y_val, val_pred))
+            test_rmse = np.sqrt(mean_squared_error(y_test, test_pred))
 
-    # ======================
-    # XGBOOST
-    # ======================
-    with mlflow.start_run(run_name="xgboost"):
+            # MAE
+            val_mae = mean_absolute_error(y_val, val_pred)
+            test_mae = mean_absolute_error(y_test, test_pred)
 
-        mlflow.log_params({
-            "model": "xgboost",
-            "num_features": len(features),
-            "train_size": len(X_train)
-        })
+            # SMAPE
+            val_smape = np.mean(
+                2 * np.abs(val_pred - y_val) / (np.abs(y_val) + np.abs(val_pred) + 1e-8)
+            )
+            test_smape = np.mean(
+                2 * np.abs(test_pred - y_test) / (np.abs(y_test) + np.abs(test_pred) + 1e-8)
+            )
 
-        xgb_model = train_xgb(X_train, y_train)
-        pred = predict_xgb(xgb_model, X_val)
+            print("Val RMSE:", val_rmse)
+            print("Test RMSE:", test_rmse)
+            print("Val MAE:", val_mae)
+            print("Test MAE:", test_mae)
+            print("Val SMAPE:", val_smape)
+            print("Test SMAPE:", test_smape)
 
-        metrics = evaluate_all(y_val, pred)
-        mlflow.log_metrics(metrics)
+            # Log to MLflow
+            mlflow.log_param("model", name)
 
-        mlflow.sklearn.log_model(xgb_model, "model")
+            mlflow.log_metric("val_rmse", val_rmse)
+            mlflow.log_metric("test_rmse", test_rmse)
 
-        results["xgboost"] = metrics
-        trained_models["xgboost"] = xgb_model
+            mlflow.log_metric("val_mae", val_mae)
+            mlflow.log_metric("test_mae", test_mae)
 
-        print("\nXGBoost Metrics:", metrics)
+            mlflow.log_metric("val_smape", val_smape)
+            mlflow.log_metric("test_smape", test_smape)
 
-    # ======================
-    # LSTM
-    # ======================
-    try:
-        with mlflow.start_run(run_name="lstm"):
+            mlflow.sklearn.log_model(model, "model")
 
-            mlflow.log_params({
-                "model": "lstm",
-                "num_features": len(features)
-            })
+            results[name] = {
+                "val_rmse": val_rmse,
+                "test_rmse": test_rmse,
+                "val_mae": val_mae,
+                "test_mae": test_mae,
+                "val_smape": val_smape,
+                "test_smape": test_smape,
+                "model_obj": model
+            }
 
-            X_train_seq, y_train_seq = create_sequences(X_train.values, y_train.values)
-            X_val_seq, y_val_seq = create_sequences(X_val.values, y_val.values)
+    # Final Results
+    print("\n=== FINAL COMPARISON ===")
 
-            if len(X_train_seq) > 0 and len(X_val_seq) > 0:
+    for k, v in results.items():
+        print(
+            k,
+            "→ Val RMSE:", v["val_rmse"],
+            "Test RMSE:", v["test_rmse"],
+            "| Val MAE:", v["val_mae"],
+            "Test MAE:", v["test_mae"],
+            "| Val SMAPE:", v["val_smape"],
+            "Test SMAPE:", v["test_smape"]
+        )
 
-                # use sequence data
-                lstm_model = train_lstm(X_train_seq, y_train_seq)
+    # Model Selection based on Val RMSE
+    print("\n=== MODEL SELECTION ===")
 
-                pred = lstm_model.predict(X_val_seq).flatten()
-                y_val_seq = y_val_seq[:len(pred)]
+    baseline_rmse = results["linear_regression"]["val_rmse"]
 
-                metrics = evaluate_all(y_val_seq, pred)
-                mlflow.log_metrics(metrics)
+    best_model_name = "linear_regression"
+    best_rmse = baseline_rmse
 
-                mlflow.tensorflow.log_model(lstm_model, "model")
+    for name, metrics in results.items():
+        if metrics["val_rmse"] < best_rmse:
+            best_model_name = name
+            best_rmse = metrics["val_rmse"]
 
-                results["lstm"] = metrics
-                trained_models["lstm"] = lstm_model
+    print(f"Best model based on RMSE: {best_model_name}")
 
-                print("\nLSTM Metrics:", metrics)
+    with open("model_name.txt", "w") as f:
+        f.write(best_model_name)
+    print("Best model name saved to model_name.txt")
 
-            else:
-                print("Skipping LSTM — not enough sequence data")
+    # Acceptance Logic
+    print("\n=== ACCEPTANCE CHECK ===")
 
-    except Exception as e:
-        print(f"LSTM failed: {e}")
-
-    # ======================
-    # SUMMARY
-    # ======================
-    print("\n" + "=" * 60)
-    print("MODEL PERFORMANCE SUMMARY")
-    print("=" * 60)
-
-    for model, metrics in results.items():
-        print(f"\n{model.upper()}")
-        for k, v in metrics.items():
-            print(f"{k}: {v:.4f}")
-
-    # ======================
-    # BEST MODEL SELECTION
-    # ======================
-    best_model = min(results, key=lambda x: results[x]["rmse"])
-    best_rmse = results[best_model]["rmse"]
-
-    print(f"\nBest model: {best_model} (RMSE: {best_rmse:.4f})")
-
-    # ======================
-    # RETRAIN ON TRAIN + VAL
-    # ======================
-    full_train = pd.concat([train_df, val_df])
-
-    X_full = full_train[features]
-    y_full = full_train["target_demand"]
-
-    if best_model == "linear_regression":
-        final_model = train_linear(X_full, y_full)
-
-    elif best_model == "xgboost":
-        final_model = train_xgb(X_full, y_full)
-
+    mlflow.set_tag("best_model", best_model_name)
+    if best_model_name == "linear_regression":
+        print("No better model found → Using baseline (Linear Regression)")
+        final_model = results["linear_regression"]["model_obj"]
     else:
-        final_model = trained_models[best_model]
+        print(f"Better model found → Using {best_model_name}")
+        final_model = results[best_model_name]["model_obj"]
 
-    # ======================
-    # FINAL TEST EVALUATION
-    # ======================
-    final_pred = final_model.predict(X_test)
-    test_metrics = evaluate_all(y_test, final_pred)
-
-    print("\nFINAL TEST PERFORMANCE")
-    print(test_metrics)
-
-    mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
-
-    # ======================
-    # SAVE MODEL
-    # ======================
-    os.makedirs("models", exist_ok=True)
-
-    save_path = f"models/{best_model}.pkl"
-    joblib.dump(final_model, save_path)
-
-    print(f"\nSaved best model locally: {save_path}")
-
+    # Save Final Model
+    joblib.dump(final_model, "final_model.pkl")
+    print("\nFinal model saved as final_model.pkl")
 
 if __name__ == "__main__":
     main()
