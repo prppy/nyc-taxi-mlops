@@ -10,48 +10,19 @@ WATERMARK_SECRET_KEY = os.getenv("WATERMARK_SECRET_KEY")
 engine = create_engine(DATABASE_URL)
 
 def setup_tables():
-    with engine.begin() as conn:  # auto-commits on exit
+    with engine.begin() as conn:
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS fact_trips (
-                pickup_datetime         TIMESTAMP,
-                dropoff_datetime        TIMESTAMP,
-                pulocationid            INTEGER,
-                dolocationid            INTEGER,
-                trip_distance           DOUBLE PRECISION,
-                fare_amount             DOUBLE PRECISION,
-                total_amount            DOUBLE PRECISION,
-                taxi_type               TEXT,
-                vendor_id               BIGINT,
-                hvfhs_license_num       TEXT,
-                dispatching_base_num    TEXT,
-                originating_base_num    TEXT,
-                passenger_count         INTEGER,
-                ratecode_id             TEXT,
-                request_datetime        TIMESTAMP,
-                on_scene_datetime       TIMESTAMP,
-                store_and_fwd_flag      BOOLEAN,
-                payment_type            TEXT,
-                trip_time               BIGINT,
-                shared_request_flag     BOOLEAN,
-                extra                   DOUBLE PRECISION,
-                mta_tax                 DOUBLE PRECISION,
-                improvement_surcharge   DOUBLE PRECISION,
-                wav_request_flag        BOOLEAN,
-                wav_match_flag          BOOLEAN,
-                tip_amount              DOUBLE PRECISION,
-                tolls_amount            DOUBLE PRECISION,
-                driver_pay              DOUBLE PRECISION,
-                congestion_surcharge    DOUBLE PRECISION,
-                airport_fee             DOUBLE PRECISION,
-                cbd_congestion_fee      DOUBLE PRECISION,
-                bcf                     DOUBLE PRECISION,
-                sales_tax               DOUBLE PRECISION,
-                access_a_ride_flag      BOOLEAN,
-                shared_match_flag       BOOLEAN,
-                row_fingerprint         TEXT
+            CREATE TABLE IF NOT EXISTS fact_trips_pickup (
+                hour_ts             TIMESTAMP,
+                pulocationid        INTEGER,
+                demand              BIGINT,
+                avg_trip_distance   DOUBLE PRECISION,
+                avg_total_amount    DOUBLE PRECISION,
+                row_fingerprint     TEXT,
+                PRIMARY KEY (hour_ts, pulocationid)
             );
-                          
-            ALTER TABLE fact_trips ADD COLUMN IF NOT EXISTS row_fingerprint TEXT;
+
+            ALTER TABLE fact_trips_pickup ADD COLUMN IF NOT EXISTS row_fingerprint TEXT;
 
             CREATE TABLE IF NOT EXISTS dim_weather (
                 date                DATE,
@@ -60,12 +31,12 @@ def setup_tables():
                 wind_speed_max      DOUBLE PRECISION,
                 borough             TEXT
             );
-                          
+
             CREATE TABLE IF NOT EXISTS dim_zone (
-                location_id   INTEGER PRIMARY KEY,
-                borough       TEXT,
-                zone          TEXT,
-                service_zone  TEXT
+                location_id         INTEGER PRIMARY KEY,
+                borough             TEXT,
+                zone                TEXT,
+                service_zone        TEXT
             );
         """))
     print("Tables created successfully")

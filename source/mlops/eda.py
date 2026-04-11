@@ -10,14 +10,12 @@ BASE_PATH = "data/processed"
 ZONE_PATH = os.path.join(BASE_PATH, "dim_zone.csv")
 WEATHER_PATH = os.path.join(BASE_PATH, "dim_weather")
 FACT_PICKUP_PATH = os.path.join(BASE_PATH, "fact_trips_pickup")
-# FACT_PAIR_PATH = os.path.join(BASE_PATH, "fact_trips_pair")
 
 EDA_PATH = os.path.join(BASE_PATH, "eda")
 JOINED_PATH = os.path.join(EDA_PATH, "joined")
 PLOTS_PATH = os.path.join(EDA_PATH, "plots")
 
 OUTPUT_PICKUP_PATH = os.path.join(JOINED_PATH, "pickup.parquet")
-OUTPUT_PAIR_PATH = os.path.join(JOINED_PATH, "pair.parquet")
 
 os.makedirs(JOINED_PATH, exist_ok=True)
 os.makedirs(PLOTS_PATH, exist_ok=True)
@@ -361,27 +359,6 @@ def main():
     
     pickup_joined.to_parquet(OUTPUT_PICKUP_PATH, index=False)
     print(f"\nSaved: {OUTPUT_PICKUP_PATH}")
-    
-    '''
-    print("\n" + "=" * 60)
-    print("VERSION 2: PICKUP-DROPOFF PAIR")
-    print("=" * 60)
-    
-    print("\nLoading fact_trips_pair...")
-    pair_df = load_all_monthly_parquet(FACT_PAIR_PATH, months=months)
-    pair_df = pair_df.drop(columns=["data_month"])
-    
-    print("\nJoining dimensions...")
-    pair_joined = join_dimensions(pair_df, zone_df, weather_df)
-    pair_joined = eda_features(pair_joined)
-    
-    print_summary(pair_joined, "PICKUP-DROPOFF PAIR")
-    generate_all_plots(pair_joined, "pair", PLOTS_PATH)
-    
-    pair_joined.to_parquet(OUTPUT_PAIR_PATH, index=False)
-    print(f"\nSaved: {OUTPUT_PAIR_PATH}")
-    '''
-    
     print("\nEDA completed.")
 
 

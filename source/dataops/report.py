@@ -421,7 +421,7 @@ def load_weather(period: str) -> pd.DataFrame:
 # email section builders
 
 def _build_fact_section(fact_df: pd.DataFrame) -> str:
-    """Stats table for fact_trips — charts are sent as attachments."""
+    """Stats table for fact_trips_pickup — charts are sent as attachments."""
     stats_html = _stats_html(fact_df, FACT_NUMERIC)
 
     return f"""

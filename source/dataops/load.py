@@ -33,25 +33,6 @@ def load_data(**context):
         )
         logger.info("fact_trips_pickup appended to Postgres successfully")
 
-    '''
-    # load fact_trips_pair
-    pair_path = os.path.join(PROCESSED_PATH, "fact_trips_pair", f"{year}-{month:02d}")
-    if not os.path.exists(pair_path):
-        logger.warning(f"No fact_trips_pair data found at {pair_path}")
-    else:
-        pair_df = pd.read_parquet(pair_path)
-        logger.info(f"Loaded fact_trips_pair with {len(pair_df):,} rows")
-        pair_df.to_sql(
-            "fact_trips_pair",
-            engine,
-            if_exists="append",
-            index=False,
-            chunksize=5000,
-            method="multi"
-        )
-        logger.info("fact_trips_pair appended to Postgres successfully")
-    '''
-
     # load dim_weather
     weather_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
     if not os.path.exists(weather_path):
