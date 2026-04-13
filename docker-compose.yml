@@ -32,11 +32,14 @@ services:
       PYTHONPATH: /opt/airflow/source
       PYSPARK_PYTHON: python
       PYSPARK_DRIVER_PYTHON: python
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
-      - ./source/dataops:/opt/airflow/dags
+      - ./source/dataops:/opt/airflow/dags/dataops
+      - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
+      - ./mlruns:/mlflow
     command: >
       bash -c "airflow db init && airflow users create --username airflow --password airflow --firstname Airflow  --lastname Admin --role Admin --email airflow@example.com"
 
@@ -58,14 +61,17 @@ services:
       PYTHONPATH: /opt/airflow/source
       PYSPARK_PYTHON: python
       PYSPARK_DRIVER_PYTHON: python
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       AIRFLOW__OPENLINEAGE__TRANSPORT: '{"type": "http", "url": "http://marquez-api:5000"}'
       OPENLINEAGE_URL: http://marquez-api:5000
       OPENLINEAGE_NAMESPACE: taxi_etl_project
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
-      - ./source/dataops:/opt/airflow/dags
+      - ./source/dataops:/opt/airflow/dags/dataops
+      - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
+      - ./mlruns:/mlflow
     ports:
       - "8080:8080"
     command: ["airflow", "webserver"]
@@ -88,14 +94,17 @@ services:
       PYTHONPATH: /opt/airflow/source
       PYSPARK_PYTHON: python
       PYSPARK_DRIVER_PYTHON: python
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       AIRFLOW__OPENLINEAGE__TRANSPORT: '{"type": "http", "url": "http://marquez-api:5000"}'
       OPENLINEAGE_URL: http://marquez-api:5000
       OPENLINEAGE_NAMESPACE: taxi_etl_project
     volumes:
       - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
-      - ./source/dataops:/opt/airflow/dags
+      - ./source/dataops:/opt/airflow/dags/dataops
+      - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
+      - ./mlruns:/mlflow
     command: ["airflow", "scheduler"]
 
   mlops:
@@ -139,6 +148,24 @@ services:
     command: npm run dev -- --host 0.0.0.0 --port 3000
     depends_on:
       - backend
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.1
+    container_name: mlflow_server
+    depends_on:
+      - postgres
+    ports:
+      - "5003:5000"
+    environment:
+      - BACKEND_STORE_URI=postgresql://airflow:airflow@postgres/mlflow_db
+      - DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    entrypoint: >
+      /bin/sh -c "
+      pip install psycopg2-binary &&
+      mlflow server --host 0.0.0.0 --backend-store-uri postgresql://airflow:airflow@postgres/mlflow_db --default-artifact-root /mlflow/artifacts"
+    #command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://airflow:airflow@postgres/airflow --default-artifact-root /mlflow/artifacts
 
   marquez-db:
     image: postgres:14
@@ -185,3 +212,4 @@ services:
 volumes:
   postgres-db-volume:
   marquez-db-vol:
+  mlflow-artifacts:
