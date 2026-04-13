@@ -15,6 +15,33 @@ logger = logging.getLogger(__name__)
 PRODUCTION_MODEL = "gradient_boosting"
 MLFLOW_EXPERIMENT = "nyc_taxi_demand_production"
 
+
+def check_trigger_source(**context) -> str:
+    """
+    Check how this DAG was triggered and decide whether to wait for data pipeline.
+
+    Returns:
+        'wait_for_data_pipeline' if scheduled run (wait for new data)
+        'skip_wait' if drift-triggered run (data already exists)
+    """
+    dag_run = context.get('dag_run')
+    trigger_conf = dag_run.conf if dag_run else {}
+    trigger_source = trigger_conf.get('trigger_source', 'scheduled')
+
+    logger.info(f"Training DAG triggered by: {trigger_source}")
+
+    if trigger_source == 'drift_monitoring':
+        # Drift monitoring already confirmed data exists, skip waiting
+        logger.info("Drift-triggered run: Skipping data pipeline wait")
+        trigger_reason = trigger_conf.get('trigger_reason', 'N/A')
+        logger.info(f"Trigger reason: {trigger_reason}")
+        return 'skip_wait'
+    else:
+        # Scheduled or manual run: wait for data pipeline to complete
+        logger.info("Scheduled/manual run: Waiting for data pipeline")
+        return 'wait_for_data_pipeline'
+
+
 def get_dates(**context):
     """Helper to calculate the window once for both tasks"""
     is_manual_run = context['dag_run'].external_trigger

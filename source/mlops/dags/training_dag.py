@@ -18,7 +18,12 @@ from airflow.operators.empty import EmptyOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from datetime import datetime, timedelta
 import sys
-from mlops.tasks.train_tasks import run_feature_engineering, train_production_model
+
+from mlops.tasks.train_tasks import (
+    run_feature_engineering,
+    train_production_model,
+    check_trigger_source
+)
 from mlops.tasks.evaluate import evaluate_and_decide
 from mlops.tasks.register import register_model
 
@@ -31,7 +36,7 @@ sys.path.insert(0, '/opt/airflow/source')
 
 # Model acceptance criteria
 # ACCEPTANCE_CRITERIA = {
-#     "max_val_rmse": 10.0,      
+#     "max_val_rmse": 10.0,
 #     "max_test_rmse": 10.0,
 #     "min_improvement": 0.0     # Must be at least as good as baseline
 # }
@@ -57,7 +62,13 @@ with DAG(
     tags=["mlops", "training", "production"],
 ) as dag:
 
-    # Wait for data pipeline to complete
+    # Check trigger source to decide if we need to wait for data pipeline
+    check_trigger = BranchPythonOperator(
+        task_id="check_trigger_source",
+        python_callable=check_trigger_source,
+    )
+
+    # Wait for data pipeline to complete (only for scheduled runs)
     wait_for_data = ExternalTaskSensor(
         task_id="wait_for_data_pipeline",
         external_dag_id="taxi_data_pipeline",
@@ -69,10 +80,16 @@ with DAG(
         poke_interval=300,  # Check every 5 minutes
     )
 
-    # Run feature engineering
+    # Skip waiting (for drift-triggered runs)
+    skip_wait = EmptyOperator(
+        task_id="skip_wait",
+    )
+
+    # Run feature engineering (convergence point from both branches)
     feature_eng_task = PythonOperator(
         task_id="feature_engineering",
         python_callable=run_feature_engineering,
+        trigger_rule="none_failed_min_one_success",  # Run if either branch succeeds
     )
 
     # Train production model
@@ -105,7 +122,13 @@ with DAG(
     )
 
     # Define pipeline
-    wait_for_data >> feature_eng_task >> train_task >> evaluate_task #for monthly scheduled runs
-    #feature_eng_task >> train_task >> evaluate_task  #for immediate test run
+    # Branch based on trigger source
+    check_trigger >> [wait_for_data, skip_wait]
+
+    # Both branches converge to feature engineering
+    [wait_for_data, skip_wait] >> feature_eng_task
+
+    # Rest of pipeline (same as before)
+    feature_eng_task >> train_task >> evaluate_task
     evaluate_task >> [register_task, skip_task]
     [register_task, skip_task] >> end_task
