@@ -14,3 +14,4 @@ python-dateutil
 mlflow
 tensorflow
 pyspark
+joblib
