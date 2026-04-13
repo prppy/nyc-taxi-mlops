@@ -24,7 +24,7 @@ with DAG(
     dag_id=DAG_ID,
     default_args=default_args,
     schedule=SCHEDULE_INTERVAL,
-    catchup=False, # TODO: set this to True to automate backfills for final submission
+    catchup=True, # TODO: set this to True to automate backfills for final submission
     on_failure_callback=on_failure_alert, 
     max_active_runs=1,
     is_paused_upon_creation=False
@@ -92,6 +92,6 @@ with DAG(
 
     # DAG dependencies
     setup_task >> [extract_taxi_task, extract_weather_task, extract_lookup_task] >> validate_raw_task
-    transform_tasks = [transform_fact_task, transform_dim_zone_task, transform_dim_weather_task]
-    validate_raw_task >> transform_tasks >> validate_processed_task 
+    transform_tasks = [transform_dim_zone_task, transform_dim_weather_task]
+    validate_raw_task >> transform_tasks >> transform_fact_task >> validate_processed_task 
     validate_processed_task >> load_task >> report_task >> watermark_audit_task
