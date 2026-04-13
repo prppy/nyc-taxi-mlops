@@ -37,10 +37,10 @@ def load_fact():
 
     query = """
     (SELECT pulocationid, hour_ts, demand
-     FROM fact_trips_pickup
-     WHERE pulocationid IS NOT NULL
-     ORDER BY random()
-     LIMIT 1000000
+        FROM fact_trips_pickup
+        WHERE pulocationid IS NOT NULL
+        ORDER BY random()
+        LIMIT 1000000
     ) AS subquery
     """
 
@@ -112,6 +112,40 @@ def run_eda(df):
 
     print("\nSample rows:")
     df.show(5)
+
+    print("\nAvg demand by hour:")
+    df.groupBy("hour") \
+        .agg(avg("demand").alias("avg_demand")) \
+        .orderBy("hour") \
+        .show()
+
+    print("\nAvg demand by day of week:")
+    df.groupBy("day_of_week") \
+        .agg(avg("demand").alias("avg_demand")) \
+        .orderBy("day_of_week") \
+        .show()
+
+    print("\nAvg demand by borough:")
+    df.groupBy("borough") \
+        .agg(avg("demand").alias("avg_demand")) \
+        .orderBy("avg_demand") \
+        .show()
+
+# MAIN
+def main():
+    print("\n=== STARTING EDA PIPELINE ===")
+
+    fact = load_fact().select("pulocationid", "hour_ts", "demand")
+    zone = load_zone()
+    weather = load_weather()
+
+    fact = add_time_features(fact)
+
+    df = join_data(fact, zone, weather)
+    df = df.filter(
+        (col("borough").isNotNull()) &
+        (~col("borough").isin("N/A", "Unknown"))
+    ).cache()
 
     print("\nAvg demand by hour:")
     df.groupBy("hour") \
