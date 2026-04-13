@@ -15,6 +15,15 @@ stop docker
 docker full shutdown
 - docker compose down
 
+# if you want to run only the etl dags:
+- having all the services (including the mlops, frontend and backend)running may be too tough on your computer
+- consider using this command: docker compose up --build postgres airflow-init airflow-scheduler airflow-webserver marquez-db marquez-api marquez-web -d
+
+# if you want to run only the mlops dags:
+- consider using this command: docker compose up --build postgres airflow-init mlops -d
+
+
+
 ## Rebuild frontend zone shapes from shapefile
 
 `source/devops/frontend/src/data/zone_shapes.json` can be rebuilt from `data/taxi_zones/taxi_zones.shp` with:

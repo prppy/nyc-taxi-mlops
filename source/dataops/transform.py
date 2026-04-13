@@ -1,6 +1,6 @@
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, coalesce, lit, when, date_trunc, count, avg, concat_ws
+from pyspark.sql.functions import col, coalesce, lit, when, date_trunc, count, avg, year, month
 from pyspark.sql.types import (DoubleType, IntegerType, LongType, StringType, TimestampType, BooleanType, DateType)
 import shutil
 from utils.config import PROCESSED_PATH, EXCLUDED_LOCATION_IDS, get_raw_file_path, get_month_year
@@ -19,13 +19,12 @@ STANDARD_TRIP_FACT_COLUMNS = [
 @monitor
 def transform_fact(**context):
     execution_date = context["execution_date"]
-    year, month = get_month_year(execution_date)
+    year_value, month_value = get_month_year(execution_date)
     # year = execution_date.year
     # month = execution_date.month
 
     # output paths for both versions of the fact table (pickup and pair)
-    pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year}-{month:02d}")
-    pair_path   = os.path.join(PROCESSED_PATH, "fact_trips_pair",   f"{year}-{month:02d}")
+    pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year_value}-{month_value:02d}")
 
     # check if folder has actual parquet files
     def has_parquet(path):
@@ -37,8 +36,8 @@ def transform_fact(**context):
         )
 
     # skip if already processed
-    if has_parquet(pickup_path) and has_parquet(pair_path):
-        print(f"Both fact tables exist for {year}-{month:02d}, skipping transform")
+    if has_parquet(pickup_path):
+        print(f"Both fact tables exist for {year_value}-{month_value:02d}, skipping transform")
         return
     
     spark = (
@@ -56,10 +55,10 @@ def transform_fact(**context):
         .getOrCreate()
     )
 
-    print(f"Transforming fact table for {year}-{month:02d}")
+    print(f"Transforming fact table for {year_value}-{month_value:02d}")
     
-    yellow_path = get_raw_file_path("yellow", year, month)
-    fhvhv_path = get_raw_file_path("fhvhv", year, month)
+    yellow_path = get_raw_file_path("yellow", year_value, month_value)
+    fhvhv_path = get_raw_file_path("fhvhv", year_value, month_value)
 
     dfs = []
 
@@ -239,32 +238,16 @@ def transform_fact(**context):
             avg("trip_distance").alias("avg_trip_distance"),
             avg("total_amount").alias("avg_total_amount"),
         )
+        pickup_demand = pickup_demand.filter(
+            (year(col("hour_ts")) == year_value) &
+            (month(col("hour_ts")) == month_value)
+        )
         pickup_demand = apply_cryptographic_watermark(pickup_demand)
         # print(f"  Pickup zone-hour rows: {pickup_demand.count():,}")
         pickup_demand.write.mode("overwrite").parquet(pickup_path)
         print(f"  Saved to: {pickup_path}")
-    '''
-    # version 2: aggregate by pickup-dropoff pair + hour
-    if not has_parquet(pair_path):
-        print(f"Aggregating pickup-dropoff pair zone-hour demand...")
-        pair_demand = combined \
-            .withColumn(
-                "pickup_dropoff_pair",
-                concat_ws("_", col("pulocationid").cast(StringType()),
-                               col("dolocationid").cast(StringType()))
-            ) \
-            .groupBy("hour_ts", "pickup_dropoff_pair", "pulocationid", "dolocationid").agg(
-                count("*").alias("demand"),
-                avg("trip_distance").alias("avg_trip_distance"),
-                avg("fare_amount").alias("avg_fare"),
-                avg("total_amount").alias("avg_total_amount"),
-            )
-        pair_demand = apply_cryptographic_watermark(pair_demand)
-        print(f"  Pair zone-hour rows: {pair_demand.count():,}")
-        pair_demand.write.mode("overwrite").parquet(pair_path)
-        print(f"  Saved to: {pair_path}")
-    '''
-    print(f"Transform complete for {year}-{month:02d}")
+
+    print(f"Transform complete for {year_value}-{month_value:02d}")
     spark.stop()
 
 
