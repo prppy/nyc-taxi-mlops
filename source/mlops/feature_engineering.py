@@ -40,10 +40,14 @@ DB_PROPERTIES = {
 }
 
 # LOAD DATA
-def load_fact():
+def load_fact(start_date, end_date):
+
+    query = f"(SELECT * FROM fact_trips_pickup WHERE hour_ts >= '{start_date}' AND hour_ts <= '{end_date}') AS filtered_fact"
+
     return spark.read.jdbc(
         url=DB_URL,
-        table="fact_trips_pickup",
+        table=query,
+        #table="fact_trips_pickup",
         column="pulocationid",
         lowerBound=1,
         upperBound=300,
@@ -193,10 +197,10 @@ def final_clean(df):
 
 
 # MAIN PIPELINE
-def main():
+def main(start_date, end_date):
     print("\n=== FEATURE ENGINEERING START ===")
 
-    fact = load_fact()
+    fact = load_fact(start_date, end_date)
     zone = load_zone()
     weather = load_weather()
 
@@ -254,4 +258,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main("2023-01-01", "2025-12-31")
