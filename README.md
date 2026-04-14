@@ -49,3 +49,11 @@ Run from repo root:
    - `docker build -f source/devops/Dockerfile -t nyc-taxi-devops .`
 2. Run the generator inside that image:
    - `docker run --rm -v "$PWD":/app -w /app nyc-taxi-devops python source/devops/backend/build_zone_shapes.py`
+
+### Devops (testing)
+
+Run all tests locally                                                               
+- pytest tests/ -v          # Should see 43 passed                                         
+                                                                                           
+Run linter locally                                                                  
+- ruff check source/        # Should see "All checks passed!"
