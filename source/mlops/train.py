@@ -181,18 +181,19 @@ def main():
             featuresCol="features",
             labelCol="label",
             predictionCol="prediction",
-            numTrees=30,
-            maxDepth=6,
+            numTrees=40,
+            maxDepth=7,
             seed=42,
         ),
         "gbt": GBTRegressor(
             featuresCol="features",
             labelCol="label",
             predictionCol="prediction",
-            maxIter=20,
+            maxIter=30,
             maxDepth=4,
+            stepSize=0.1,
             seed=42,
-        ),
+        )
     }
 
     results = {}
@@ -252,11 +253,17 @@ def main():
         )
 
     print("\n=== MODEL SELECTION ===")
-    best_model_name = min(results, key=lambda x: results[x]["val_rmse"])
-    print(f"Best model based on RMSE: {best_model_name}")
 
-    with open("model_name.txt", "w") as f:
-        f.write(best_model_name)
+    sorted_models = sorted(results.items(), key=lambda x: x[1]["val_rmse"])
+    best_model_name, best_metrics = sorted_models[0]
+    second_model_name, second_metrics = sorted_models[1]
+
+    rmse_gap = second_metrics["val_rmse"] - best_metrics["val_rmse"]
+
+    if rmse_gap < 1.0:
+        # If RMSE is very close, prefer better SMAPE
+        if second_metrics["val_smape"] < best_metrics["val_smape"]:
+            best_model_name = second_model_name
 
     mlflow.set_tag("best_model", best_model_name)
 
