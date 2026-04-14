@@ -45,7 +45,7 @@ def save_drift_reports_task(**context):
     """
     Save drift reports to filesystem using drift_detector.save_reports()
 
-    Saves CSV reports and text summary to data/monitor/reports/
+    Saves CSV reports and text summary to source/mlops/monitor/
     """
     from mlops.monitor.drift_detector import save_reports
 
@@ -59,7 +59,7 @@ def save_drift_reports_task(**context):
     logger.info("Saving drift reports...")
     try:
         save_reports(report)
-        logger.info("Drift reports saved to data/monitor/reports/")
+        logger.info("Drift reports saved to source/mlops/monitor/")
     except Exception as e:
         logger.error(f"Failed to save drift reports: {e}")
         raise
