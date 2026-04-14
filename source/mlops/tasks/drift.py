@@ -27,7 +27,7 @@ def run_drift_detection(**context):
         report = detect_drift()
 
         # Log summary
-        logger.info(f"Drift detection complete:")
+        logger.info("Drift detection complete:")
         logger.info(f"  - Features analyzed: {len(report['featureStats'])}")
         logger.info(f"  - Critical drift features: {report['criticalCount']}")
         logger.info(f"  - High drift features: {report['highDriftCount']}")
@@ -86,16 +86,16 @@ def evaluate_drift_severity(**context) -> str:
     alert_needed = should_alert(report)
 
     if alert_needed:
-        logger.warning(f"⚠️  DRIFT ALERT TRIGGERED!")
+        logger.warning("DRIFT ALERT TRIGGERED!")
         logger.warning(f"  - Critical features: {report['criticalCount']}")
         logger.warning(f"  - High drift features: {report['highDriftCount']}")
-        logger.warning(f"  → Triggering retraining pipeline")
+        logger.warning("  -> Triggering retraining pipeline")
         return 'trigger_retraining'
     else:
         logger.info("✓ No significant drift detected")
         logger.info(f"  - Critical features: {report['criticalCount']}")
         logger.info(f"  - High drift features: {report['highDriftCount']}")
-        logger.info(f"  → Skipping retraining")
+        logger.info("  -> Skipping retraining")
         return 'skip_retraining'
 
 
