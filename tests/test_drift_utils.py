@@ -9,7 +9,8 @@ import sys
 from unittest.mock import MagicMock
 
 # Mock heavy dependencies before importing drift_detector
-# PySpark, dotenv, and airflow are not needed for pure function tests
+# pandas, PySpark, dotenv, and airflow are not needed for pure function tests
+sys.modules["pandas"] = MagicMock()
 mock_spark_module = MagicMock()
 mock_spark_module.builder.appName.return_value.config.return_value.config.return_value.getOrCreate.return_value = MagicMock()
 sys.modules["pyspark"] = MagicMock()
