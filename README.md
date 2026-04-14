@@ -20,7 +20,7 @@ docker full shutdown
 - consider using this command: docker compose up --build postgres airflow-init airflow-scheduler airflow-webserver marquez-db marquez-api marquez-web -d
 
 # if you want to run only the mlops dags:
-- consider using this command: docker compose up --build postgres airflow-init mlops -d
+- consider using this command: docker compose up --build postgres mlflow mlops -d
 
 
 

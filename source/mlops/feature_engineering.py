@@ -40,9 +40,22 @@ DB_PROPERTIES = {
 }
 
 # LOAD DATA
-def load_fact(start_date, end_date):
-
-    query = f"(SELECT * FROM fact_trips_pickup WHERE hour_ts >= '{start_date}' AND hour_ts <= '{end_date}') AS filtered_fact"
+def load_fact():
+    if DEV_MODE and SAMPLE_FRACTION < 1.0:
+        percent = SAMPLE_FRACTION * 100
+        query = f"""
+        (
+            SELECT *
+            FROM fact_trips_pickup
+            TABLESAMPLE BERNOULLI ({percent})
+            WHERE pulocationid IS NOT NULL
+        ) AS subquery
+        """
+        return spark.read.jdbc(
+            url=DB_URL,
+            table=query,
+            properties=DB_PROPERTIES
+        )
 
     return spark.read.jdbc(
         url=DB_URL,
@@ -54,7 +67,7 @@ def load_fact(start_date, end_date):
         numPartitions=8,
         properties=DB_PROPERTIES
     )
-
+    
 def load_zone():
     return spark.read.jdbc(
         url=DB_URL,
@@ -140,7 +153,7 @@ def add_weather_features(df):
 def add_lag_features(df):
 
     # ensure correct ordering
-    df = df.repartition("pulocationid").sortWithinPartitions("hour_ts")
+    df = df.repartition(32, "pulocationid").sortWithinPartitions("hour_ts")
 
     window_spec = Window.partitionBy("pulocationid").orderBy("hour_ts")
 
@@ -205,17 +218,12 @@ def main(start_date, end_date):
     weather = load_weather()
 
     df = join_all(fact, zone, weather)
-
-    if DEV_MODE:
-        df = df.sample(fraction=SAMPLE_FRACTION, seed=42)
-
     df = add_time_features(df)
     df = add_weather_features(df)
     df = add_lag_features(df)
     df = encode_location_features(df)
 
     df = final_clean(df)
-    df.count()
 
     # select final columns
     df = df.select(
@@ -244,13 +252,14 @@ def main(start_date, end_date):
     )
 
     # WRITE TO POSTGRES
-    df.write \
+    df.coalesce(8).write \
         .format("jdbc") \
         .option("url", DB_URL) \
         .option("dbtable", "pickup_features") \
         .option("user", user) \
         .option("password", password) \
         .option("driver", "org.postgresql.Driver") \
+        .option("batchsize", 5000) \
         .mode(WRITE_MODE) \
         .save()
 

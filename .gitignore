@@ -19,3 +19,5 @@ source/mlops/.Trash-0
 
 mlflow.db
 mlruns/
+final_model_spark/
+model_name.txt
