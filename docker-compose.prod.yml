@@ -25,7 +25,8 @@ services:
       - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
       - ./source/mlops/mlruns:/mlflow
-      - /var/run/docker.sock:/var/run/docker.sock
+    tmpfs:
+      - /opt/airflow/logs 
     command: >
       bash -c "airflow db init && 
       airflow db migrate &&
@@ -70,7 +71,8 @@ services:
       - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
       - ./source/mlops/mlruns:/mlflow
-      - /var/run/docker.sock:/var/run/docker.sock
+    tmpfs:
+      - /opt/airflow/logs 
     ports:
       - "8080:8080"
     command: ["airflow", "webserver"]
@@ -106,9 +108,9 @@ services:
       - ./source/dataops:/opt/airflow/dags/dataops
       - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
-      - ./logs:/opt/airflow/logs
       - ./source/mlops/mlruns:/mlflow
-      - /var/run/docker.sock:/var/run/docker.sock
+    tmpfs:
+      - /opt/airflow/logs 
     command: ["airflow", "scheduler"]
     networks:
       - appnet
