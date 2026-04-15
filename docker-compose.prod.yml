@@ -27,7 +27,7 @@ services:
       - ./source/mlops/mlruns:/mlflow
       - /var/run/docker.sock:/var/run/docker.sock
     command: >
-      bash -c "
+      bash -c "airflow db init && 
       airflow db migrate &&
       airflow users create
       --username admin
