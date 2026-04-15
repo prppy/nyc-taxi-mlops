@@ -24,7 +24,6 @@ services:
       "
     volumes:
       - ./source:/opt/airflow/source
-      - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
     networks:
       - appnet
@@ -57,7 +56,6 @@ services:
       - "8080:8080"
     volumes:
       - ./source:/opt/airflow/source
-      - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -85,7 +83,6 @@ services:
     command: scheduler
     volumes:
       - ./source:/opt/airflow/source
-      - ./logs:/opt/airflow/logs
       - ./data:/opt/airflow/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
