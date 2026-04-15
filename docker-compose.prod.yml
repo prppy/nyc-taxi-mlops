@@ -36,7 +36,8 @@ services:
       --firstname Admin
       --lastname User
       --role Admin
-      --email ${AIRFLOW_ADMIN_EMAIL}
+      --email ${AIRFLOW_ADMIN_EMAIL} || true &&
+      airflow pools set global_serial_pool 1 'Serialize Spark-heavy tasks across all DAGs'
       "
     networks:
       - appnet
