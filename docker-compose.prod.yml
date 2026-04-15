@@ -4,7 +4,7 @@ services:
   airflow-init:
     build:
       context: .
-      dockerfile: ./docker/airflow/Dockerfile
+      dockerfile: ./source/dataops/Dockerfile
     container_name: airflow_init
     env_file:
       - .env
@@ -32,7 +32,7 @@ services:
   airflow-webserver:
     build:
       context: .
-      dockerfile: ./docker/airflow/Dockerfile
+      dockerfile: ./source/dataops/Dockerfile
     container_name: airflow_webserver
     restart: unless-stopped
     depends_on:
@@ -66,7 +66,7 @@ services:
   airflow-scheduler:
     build:
       context: .
-      dockerfile: ./docker/airflow/Dockerfile
+      dockerfile: ./source/dataops/Dockerfile
     container_name: airflow_scheduler
     restart: unless-stopped
     depends_on:
@@ -94,7 +94,7 @@ services:
   mlflow:
     build:
       context: .
-      dockerfile: ./docker/mlflow/Dockerfile
+      dockerfile: ./source/mlops/Dockerfile
     container_name: mlflow
     restart: unless-stopped
     env_file:
@@ -115,7 +115,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: ./docker/backend/Dockerfile
+      dockerfile: ./source/devops/Dockerfile.backend
     container_name: backend
     restart: unless-stopped
     env_file:
@@ -132,8 +132,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./source/devops/Dockerfile.frontend
     container_name: frontend
     restart: unless-stopped
     ports:
