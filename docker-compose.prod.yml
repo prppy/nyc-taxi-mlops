@@ -1,16 +1,31 @@
-version: "3.9"
-
 services:
   airflow-init:
     build:
       context: .
-      dockerfile: ./source/dataops/Dockerfile
+      dockerfile: source/dataops/Dockerfile
     container_name: airflow_init
     env_file:
       - .env
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${DATABASE_URL}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+      PYTHONPATH: /opt/airflow/source
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      WATERMARK_SECRET_KEY: ${WATERMARK_SECRET_KEY}
+      GIT_PYTHON_REFRESH: quiet
+    volumes:
+      - ./.env:/opt/airflow/.env
+      - ./source:/opt/airflow/source
+      - ./source/dataops:/opt/airflow/dags/dataops
+      - ./source/mlops/dags:/opt/airflow/dags/mlops
+      - ./data:/opt/airflow/data
+      - ./source/mlops/mlruns:/mlflow
+      - /var/run/docker.sock:/var/run/docker.sock
     command: >
       bash -c "
       airflow db migrate &&
@@ -22,16 +37,13 @@ services:
       --role Admin
       --email ${AIRFLOW_ADMIN_EMAIL}
       "
-    volumes:
-      - ./source:/opt/airflow/source
-      - ./data:/opt/airflow/data
     networks:
       - appnet
 
   airflow-webserver:
     build:
       context: .
-      dockerfile: ./source/dataops/Dockerfile
+      dockerfile: source/dataops/Dockerfile
     container_name: airflow_webserver
     restart: unless-stopped
     depends_on:
@@ -40,31 +52,35 @@ services:
     env_file:
       - .env
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${DATABASE_URL}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
-      AIRFLOW__SMTP__SMTP_HOST: ${AIRFLOW__SMTP__SMTP_HOST}
-      AIRFLOW__SMTP__SMTP_USER: ${AIRFLOW__SMTP__SMTP_USER}
-      AIRFLOW__SMTP__SMTP_PASSWORD: ${AIRFLOW__SMTP__SMTP_PASSWORD}
-      AIRFLOW__SMTP__SMTP_PORT: ${AIRFLOW__SMTP__SMTP_PORT}
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      PYTHONPATH: /opt/airflow/source
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       WATERMARK_SECRET_KEY: ${WATERMARK_SECRET_KEY}
-      GIT_PYTHON_REFRESH: ${GIT_PYTHON_REFRESH}
-    command: webserver
+      GIT_PYTHON_REFRESH: quiet
+    volumes:
+      - ./.env:/opt/airflow/.env
+      - ./source:/opt/airflow/source
+      - ./source/dataops:/opt/airflow/dags/dataops
+      - ./source/mlops/dags:/opt/airflow/dags/mlops
+      - ./data:/opt/airflow/data
+      - ./source/mlops/mlruns:/mlflow
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
-    volumes:
-      - ./source:/opt/airflow/source
-      - ./data:/opt/airflow/data
-      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["airflow", "webserver"]
     networks:
       - appnet
 
   airflow-scheduler:
     build:
       context: .
-      dockerfile: ./source/dataops/Dockerfile
+      dockerfile: source/dataops/Dockerfile
     container_name: airflow_scheduler
     restart: unless-stopped
     depends_on:
@@ -73,55 +89,69 @@ services:
     env_file:
       - .env
     environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${DATABASE_URL}
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_DB_URL}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      PYTHONPATH: /opt/airflow/source
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       WATERMARK_SECRET_KEY: ${WATERMARK_SECRET_KEY}
-      GIT_PYTHON_REFRESH: ${GIT_PYTHON_REFRESH}
-    command: scheduler
+      GIT_PYTHON_REFRESH: quiet
     volumes:
+      - ./.env:/opt/airflow/.env
       - ./source:/opt/airflow/source
+      - ./source/dataops:/opt/airflow/dags/dataops
+      - ./source/mlops/dags:/opt/airflow/dags/mlops
       - ./data:/opt/airflow/data
+      - ./logs:/opt/airflow/logs
+      - ./source/mlops/mlruns:/mlflow
       - /var/run/docker.sock:/var/run/docker.sock
+    command: ["airflow", "scheduler"]
     networks:
       - appnet
 
   mlflow:
-    build:
-      context: .
-      dockerfile: ./source/mlops/Dockerfile
+    image: ghcr.io/mlflow/mlflow:v2.11.1
     container_name: mlflow
     restart: unless-stopped
     env_file:
       - .env
-    command: >
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri ${DATABASE_URL}
-      --default-artifact-root /mlflow/artifacts
     ports:
       - "5000:5000"
     volumes:
-      - mlflow_artifacts:/mlflow/artifacts
+      - ./source/mlops/mlruns:/mlflow/artifacts
+    command: >
+      sh -c "
+      pip install psycopg2-binary &&
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri ${MLFLOW_DB_URL}
+      --default-artifact-root /mlflow/artifacts
+      "
     networks:
       - appnet
 
   backend:
     build:
       context: .
-      dockerfile: ./source/devops/Dockerfile.backend
+      dockerfile: source/devops/Dockerfile.backend
     container_name: backend
     restart: unless-stopped
+    working_dir: /app
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      DATABASE_URL: ${APP_DATABASE_URL}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - .:/app
     ports:
-      - "8000:8000"
+      - "5002:5000"
+    command: python source/devops/backend/app.py
     depends_on:
       - mlflow
     networks:
@@ -130,11 +160,18 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: ./source/devops/Dockerfile.frontend
+      dockerfile: source/devops/Dockerfile.frontend
     container_name: frontend
     restart: unless-stopped
+    working_dir: /app/source/devops/frontend
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/source/devops/frontend/node_modules
     ports:
-      - "80:80"
+      - "3001:3000"
+    command: npm run dev -- --host 0.0.0.0 --port 3000
     depends_on:
       - backend
     networks:
@@ -142,6 +179,3 @@ services:
 
 networks:
   appnet:
-
-volumes:
-  mlflow_artifacts:
