@@ -13,6 +13,8 @@ RUN curl -fL https://repo1.maven.org/maven2/io/openlineage/openlineage-spark/1.8
     -o /opt/airflow/jars/openlineage-spark-1.8.0.jar
 
 USER airflow
-COPY source/dataops/requirements.txt /requirements.txt
-RUN pip install --no-cache-dir -r /requirements.txt && \
-    pip install --no-cache-dir pyspark==3.5.2
+COPY source/dataops/requirements.txt /tmp/dataops-requirements.txt
+COPY source/mlops/requirements.txt /tmp/mlops-requirements.txt
+
+RUN pip install --no-cache-dir -r /tmp/dataops-requirements.txt && \
+    pip install --no-cache-dir -r /tmp/mlops-requirements.txt

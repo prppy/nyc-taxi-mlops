@@ -287,8 +287,6 @@ def _processed_zone_checks(df, errors, warnings):
 def validate_raw(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     errors = []
     warnings = []
@@ -341,8 +339,6 @@ def validate_raw(**context):
 def validate_processed(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     errors = []
     warnings = []

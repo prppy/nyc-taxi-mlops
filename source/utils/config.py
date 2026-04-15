@@ -10,7 +10,6 @@ DATASETS = {
     "fhvhv": "fhvhv_tripdata"
 }
 
-TAXI_TYPES = list(DATASETS.keys())
 BOROUGH_COORDS = {
     "Bronx": (40.8448, -73.8648),
     "Brooklyn": (40.6782, -73.9442),
@@ -21,36 +20,22 @@ BOROUGH_COORDS = {
 }
 
 # dates
-START_YEAR, START_MONTH = 2023, 3
-TEST_YEAR = 2025
-
-# table names
-FACT_TABLE = "fact_demand"
-
-DIM_TABLES = {
-    "zone": "dim_zone",
-    "weather": "dim_weather"
-}
-
-ZONE_LOOKUP_FILE = f"{RAW_PATH}taxi_zone_lookup.csv"
+DATOPS_START_YEAR, DATAOPS_START_MONTH = 2023, 3
+MLOPS_START_YEAR, MLOPS_START_MONTH = 2025, 3
 
 # unwanted location ids
 EXCLUDED_LOCATION_IDS = [264, 265]
 
 # airflow dag configs
-DAG_ID = "taxi_data_pipeline"
-SCHEDULE_INTERVAL = "0 0 L * *" # "@monthly"   # or "@daily"
+DATAOPS_DAG_ID = "taxi_data_pipeline"
+SCHEDULE_INTERVAL = "0 0 L * *" 
+TRAIN_DAG_ID = "taxi_train_pipeline"
+MONITOR_DAG_ID = "taxi_monitor_pipeline"
 RETRY_COUNT = 0 # TODO: set this to 1/2 for final submission
-
-# logging
-LOG_LEVEL = "INFO"
 
 # helpers
 def get_raw_file_path(dataset, year, month):
     return f"{RAW_PATH}taxi/{dataset}_tripdata_{year}-{month:02d}.parquet"
-
-def get_processed_fact_path():
-    return f"{PROCESSED_PATH}fact_demand/"
 
 def get_month_year(execution_date):
     from dateutil.relativedelta import relativedelta
@@ -58,5 +43,4 @@ def get_month_year(execution_date):
 
     year = target_date.year
     month = target_date.month
-
     return (year, month)

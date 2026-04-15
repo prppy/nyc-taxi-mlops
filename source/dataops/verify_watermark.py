@@ -18,8 +18,6 @@ from pyspark.sql import SparkSession
 def validate_data_watermark(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
     
     # Path to the data saved by the transform task
     pickup_path = f"/opt/airflow/data/processed/fact_trips_pickup/{year}-{month:02d}"

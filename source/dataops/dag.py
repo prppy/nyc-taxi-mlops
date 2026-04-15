@@ -11,23 +11,24 @@ from dataops.report import report_data
 
 from utils.alerting import on_failure_alert
 from utils.db import setup_tables
-from utils.config import (DAG_ID, START_YEAR, START_MONTH, SCHEDULE_INTERVAL, RETRY_COUNT)
+from utils.config import (DATAOPS_DAG_ID, DATOPS_START_YEAR, DATAOPS_START_MONTH, SCHEDULE_INTERVAL, RETRY_COUNT)
 
 default_args = {
     "owner": "dataops",
-    "start_date": datetime(START_YEAR, START_MONTH, 1),
+    "start_date": datetime(DATOPS_START_YEAR, DATAOPS_START_MONTH, 1),
     "retries": RETRY_COUNT,
     "on_failure_callback": on_failure_alert,
 }
 
 with DAG(
-    dag_id=DAG_ID,
+    dag_id=DATAOPS_DAG_ID,
     default_args=default_args,
     schedule=SCHEDULE_INTERVAL,
     catchup=True, # TODO: set this to True to automate backfills for final submission
     on_failure_callback=on_failure_alert, 
     max_active_runs=1,
-    is_paused_upon_creation=False
+    is_paused_upon_creation=False,
+    tags=["dataops"],
 ) as dag:
     
     setup_task = PythonOperator(
@@ -57,7 +58,8 @@ with DAG(
 
     transform_fact_task = PythonOperator(
         task_id="transform_fact",
-        python_callable=transform_fact
+        python_callable=transform_fact,
+        pool="global_serial_pool",
     )
     
     transform_dim_zone_task = PythonOperator(
@@ -77,7 +79,8 @@ with DAG(
 
     load_task = PythonOperator(
         task_id="load",
-        python_callable=load_data
+        python_callable=load_data,
+        pool="global_serial_pool",
     )
 
     report_task = PythonOperator(

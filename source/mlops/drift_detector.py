@@ -17,8 +17,7 @@ from airflow.utils.email import send_email
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-REFERENCE_TABLE = "pickup_features"
-LIVE_TABLE = "live_features"
+FEATURE_TABLE = "pickup_features"
 REPORT_PATH = "source/mlops/monitor"
 MODEL_PATH = "final_model_spark"
 
@@ -38,6 +37,7 @@ NUMERIC_FEATURES = [
     "dow_cos",
     "temperature_mean",
     "precipitation_sum",
+    "wind_speed_max",
     "is_rainy",
     "is_heavy_rain",
     "is_hot",
@@ -76,39 +76,51 @@ HIGH_THRESHOLD = 0.55
 MEDIUM_THRESHOLD = 0.30
 
 MIN_HIGH_DRIFT_FEATURES_FOR_ALERT = 2
-
 LABEL_DRIFT_THRESHOLD = 0.30
 
 
-spark = (
-    SparkSession.builder
-    .appName("Drift Detector")
-    .config("spark.jars.packages", "org.postgresql:postgresql:42.7.3")
-    .config("spark.driver.memory", "2g")
-    .config("spark.executor.memory", "2g")
-    .getOrCreate()
-)
+def get_spark():
+    spark = (
+        SparkSession.builder
+        .appName("Drift Detector")
+        .config("spark.jars.packages", "org.postgresql:postgresql:42.7.3")
+        .config("spark.driver.memory", "2g")
+        .config("spark.executor.memory", "2g")
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
 
-spark.sparkContext.setLogLevel("WARN")
 
-load_dotenv(override=True)
+def get_db_config():
+    load_dotenv(override=True)
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not found in .env")
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL not found in .env")
 
-match = re.match(r"postgresql://(.*):(.*)@(.*):(.*)/(.*)", DATABASE_URL)
-if not match:
-    raise ValueError("Invalid DATABASE_URL format")
+    match = re.match(r"postgresql://(.*):(.*)@(.*):(.*)/(.*)", database_url)
+    if not match:
+        raise ValueError("Invalid DATABASE_URL format")
 
-user, password, host, port, db = match.groups()
+    user, password, host, port, db = match.groups()
 
-DB_URL = f"jdbc:postgresql://{host}:{port}/{db}"
-DB_PROPERTIES = {
-    "user": user,
-    "password": password,
-    "driver": "org.postgresql.Driver",
-}
+    db_url = f"jdbc:postgresql://{host}:{port}/{db}"
+    db_properties = {
+        "user": user,
+        "password": password,
+        "driver": "org.postgresql.Driver",
+    }
+
+    return {
+        "user": user,
+        "password": password,
+        "host": host,
+        "port": port,
+        "db": db,
+        "db_url": db_url,
+        "db_properties": db_properties,
+    }
 
 
 def parse_alert_emails():
@@ -121,12 +133,12 @@ def parse_alert_emails():
     return [e for e in emails if e]
 
 
-def load_table(table_name):
+def load_table(spark, db_url, db_properties, table_name):
     logger.info(f"Loading table: {table_name}")
     return spark.read.jdbc(
-        url=DB_URL,
+        url=db_url,
         table=table_name,
-        properties=DB_PROPERTIES
+        properties=db_properties,
     )
 
 
@@ -369,28 +381,86 @@ def detect_model_drift(live_df, model_path=MODEL_PATH, baseline_rmse=BASELINE_RM
         "severity": drift_label(min(max(rmse_ratio, 0.0), 1.0)),
         "shouldAlert": rmse_ratio >= MODEL_DRIFT_THRESHOLD_RATIO,
     }
+    
+def load_reference_and_current_data(spark, db_url, db_properties):
+    latest_ts_query = f"""
+    (
+        SELECT MAX(hour_ts) AS max_hour_ts
+        FROM {FEATURE_TABLE}
+    ) AS latest_ts_subquery
+    """
+
+    latest_ts_df = spark.read.jdbc(
+        url=db_url,
+        table=latest_ts_query,
+        properties=db_properties,
+    )
+
+    max_hour_ts = latest_ts_df.collect()[0]["max_hour_ts"]
+    if max_hour_ts is None:
+        raise ValueError("pickup_features is empty")
+
+    latest_month_start = max_hour_ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    reference_query = f"""
+    (
+        SELECT *
+        FROM {FEATURE_TABLE}
+        WHERE hour_ts < '{latest_month_start}'
+    ) AS reference_subquery
+    """
+
+    live_query = f"""
+    (
+        SELECT *
+        FROM {FEATURE_TABLE}
+        WHERE hour_ts >= '{latest_month_start}'
+    ) AS current_subquery
+    """
+
+    reference_df = spark.read.jdbc(
+        url=db_url,
+        table=reference_query,
+        properties=db_properties,
+    )
+
+    live_df = spark.read.jdbc(
+        url=db_url,
+        table=live_query,
+        properties=db_properties,
+    )
+
+    return reference_df, live_df, latest_month_start
 
 
-def detect_drift(reference_table=REFERENCE_TABLE, live_table=LIVE_TABLE):
-    reference_df = load_table(reference_table)
-    live_df = load_table(live_table)
+def detect_drift():
+    spark = get_spark()
+    try:
+        db_config = get_db_config()
+        reference_df, live_df, latest_month = load_reference_and_current_data(
+            spark,
+            db_config["db_url"],
+            db_config["db_properties"],
+        )
 
-    feature_report = detect_feature_drift(reference_df, live_df)
-    label_report = detect_label_drift(reference_df, live_df, label_col="target_demand")
-    model_report = detect_model_drift(live_df)
+        feature_report = detect_feature_drift(reference_df, live_df)
+        label_report = detect_label_drift(reference_df, live_df, label_col="target_demand")
+        model_report = detect_model_drift(live_df)
 
-    return {
-        "referenceTable": reference_table,
-        "liveTable": live_table,
-        "featureStats": feature_report["featureStats"],
-        "missingFeatures": feature_report["missingFeatures"],
-        "excludedFeatures": feature_report["excludedFeatures"],
-        "highDriftCount": feature_report["highDriftCount"],
-        "criticalCount": feature_report["criticalCount"],
-        "avgDriftScore": feature_report["avgDriftScore"],
-        "labelDrift": label_report,
-        "modelDrift": model_report,
-    }
+        return {
+            "referenceTable": f"{FEATURE_TABLE} before {latest_month}",
+            "liveTable": f"{FEATURE_TABLE} from {latest_month}",
+            "featureStats": feature_report["featureStats"],
+            "missingFeatures": feature_report["missingFeatures"],
+            "excludedFeatures": feature_report["excludedFeatures"],
+            "highDriftCount": feature_report["highDriftCount"],
+            "criticalCount": feature_report["criticalCount"],
+            "avgDriftScore": feature_report["avgDriftScore"],
+            "labelDrift": label_report,
+            "modelDrift": model_report,
+        }
+    finally:
+        spark.stop()
 
 
 def should_alert(report):
@@ -636,23 +706,23 @@ def send_drift_alert(report):
     logger.info("Drift alert email sent.")
 
 
-if __name__ == "__main__":
-    report = detect_drift()
-    save_reports(report)
+# if __name__ == "__main__":
+#     report = detect_drift()
+#     save_reports(report)
 
-    print("\n=== DRIFT RESPONSE ===")
-    print(f"Features returned: {len(report['featureStats'])}")
-    print(f"Missing features: {len(report['missingFeatures'])}")
-    print(f"Excluded features: {len(report['excludedFeatures'])}")
-    print(f"Avg feature drift score: {report['avgDriftScore']:.4f}")
-    print(f"High-drift features: {report['highDriftCount']}")
-    print(f"Critical features: {report['criticalCount']}")
-    print(f"Label drift: {report['labelDrift']}")
-    print(f"Model drift: {report['modelDrift']}")
-    print(f"Should alert: {should_alert(report)}")
+#     print("\n=== DRIFT RESPONSE ===")
+#     print(f"Features returned: {len(report['featureStats'])}")
+#     print(f"Missing features: {len(report['missingFeatures'])}")
+#     print(f"Excluded features: {len(report['excludedFeatures'])}")
+#     print(f"Avg feature drift score: {report['avgDriftScore']:.4f}")
+#     print(f"High-drift features: {report['highDriftCount']}")
+#     print(f"Critical features: {report['criticalCount']}")
+#     print(f"Label drift: {report['labelDrift']}")
+#     print(f"Model drift: {report['modelDrift']}")
+#     print(f"Should alert: {should_alert(report)}")
 
-    for row in report["featureStats"][:10]:
-        print(row)
+#     for row in report["featureStats"][:10]:
+#         print(row)
 
-    if should_alert(report):
-        send_drift_alert(report)
+#     if should_alert(report):
+#         send_drift_alert(report)

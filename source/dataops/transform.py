@@ -20,8 +20,6 @@ STANDARD_TRIP_FACT_COLUMNS = [
 def transform_fact(**context):
     execution_date = context["execution_date"]
     year_value, month_value = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     # output paths for both versions of the fact table (pickup and pair)
     pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year_value}-{month_value:02d}")
@@ -255,8 +253,6 @@ def transform_fact(**context):
 def transform_dim_zone(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     spark = (
         SparkSession.builder
@@ -329,8 +325,6 @@ def transform_dim_zone(**context):
 def transform_dim_weather(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     spark = (
         SparkSession.builder

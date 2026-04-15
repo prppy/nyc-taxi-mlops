@@ -546,8 +546,6 @@ def _send_email_with_charts(subject: str, html_body: str, images: dict, period: 
 def report_data(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
     period = f"{year}-{month:02d}"
 
     logger.info(f"Generating data quality report for {period}")

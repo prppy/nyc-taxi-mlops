@@ -26,25 +26,24 @@ from airflow.operators.empty import EmptyOperator
 from datetime import datetime, timedelta
 import sys
 
-# Add source to Python path
 sys.path.insert(0, '/opt/airflow/source')
 
-from mlops.tasks.drift import (
-    run_drift_detection,
+from mlops.tasks import (
+    run_drift_detection_task,
     save_drift_reports_task,
-    evaluate_drift_severity,
-    send_drift_alert_task
+    evaluate_drift_severity_task,
+    send_drift_alert_task,
 )
 from utils.alerting import on_failure_alert
-
+from utils.config import MLOPS_START_YEAR, MLOPS_START_MONTH, RETRY_COUNT, TRAIN_DAG_ID, MONITOR_DAG_ID
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
 default_args = {
     "owner": "mlops",
-    "start_date": datetime(2024, 1, 1),
-    "retries": 1,
+    "start_date": datetime(MLOPS_START_YEAR, MLOPS_START_MONTH, 1),
+    "retries": RETRY_COUNT,
     "retry_delay": timedelta(minutes=5),
     "on_failure_callback": on_failure_alert,
 }
@@ -54,13 +53,14 @@ default_args = {
 # ============================================================================
 
 with DAG(
-    dag_id="drift_monitoring",
+    dag_id=MONITOR_DAG_ID,
     default_args=default_args,
     description="Detect data drift and trigger retraining when needed",
-    schedule_interval='@daily',  # Run once per day
-    catchup=False,
+    schedule_interval='@monthly',  # Run once per day
+    catchup=False, # TODO: set this to True to automate backfills for final submission
     max_active_runs=1,
-    tags=["mlops", "monitoring", "drift"],
+    # is_paused_upon_creation=False,
+    tags=["mlops", "monitoring"],
 ) as dag:
 
     # Start task
@@ -71,7 +71,8 @@ with DAG(
     # Run drift detection
     drift_detection = PythonOperator(
         task_id="drift_detection",
-        python_callable=run_drift_detection,
+        python_callable=run_drift_detection_task,
+        pool="global_serial_pool",
     )
 
     # Save drift reports to filesystem
@@ -83,20 +84,19 @@ with DAG(
     # Evaluate drift severity and decide on retraining
     evaluate_severity = BranchPythonOperator(
         task_id="evaluate_severity",
-        python_callable=evaluate_drift_severity,
+        python_callable=evaluate_drift_severity_task,
     )
 
     # Trigger training DAG if drift detected
     trigger_retraining = TriggerDagRunOperator(
         task_id="trigger_retraining",
-        trigger_dag_id="ml_training_pipeline",
+        trigger_dag_id=TRAIN_DAG_ID,
         conf={
             "trigger_source": "drift_monitoring",
-            "trigger_reason": "Data drift detected - check drift_summary.txt for details",
-            "drift_report_path": "data/monitor/reports/drift_summary.txt",
+            "trigger_reason": "Data drift detected",
         },
-        wait_for_completion=False,  # Don't block this DAG
-        reset_dag_run=True,  # Allow immediate re-trigger
+        wait_for_completion=False,
+        reset_dag_run=True,
     )
 
     # Send drift alert email

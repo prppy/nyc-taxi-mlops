@@ -138,8 +138,6 @@ def main():
 
     print("\n=== LOADING DATA ===")
     df = load_features(spark, jdbc_url, jdbc_props)
-    # print("Total rows:", df.count())
-    print("Total columns:", len(df.columns))
 
     print("\n=== FINDING SPLIT CUT-OFFS ===")
     total_rows, train_cutoff, val_cutoff = get_time_cutoffs(df)
@@ -158,7 +156,7 @@ def main():
     print("Number of feature columns:", len(feature_cols))
 
     print("\n=== ASSEMBLING FEATURES ===")
-    train_vec, val_vec, test_vec, assembler = assemble_features(train, val, test, feature_cols)
+    train_vec, val_vec, test_vec, _ = assemble_features(train, val, test, feature_cols)
 
     # train_vec.cache()
     # val_vec.cache()
@@ -201,8 +199,7 @@ def main():
     for name, estimator in models.items():
         print(f"\n--- {name.upper()} ---")
 
-        with mlflow.start_run(run_name=name):
-            print(f"About to fit {name} on train_vec...")
+        with mlflow.start_run(run_name=name) as run:
             model = estimator.fit(train_vec)
 
             val_pred = model.transform(val_vec)
@@ -228,18 +225,19 @@ def main():
             mlflow.log_metric("val_smape", val_smape)
             mlflow.log_metric("test_smape", test_smape)
 
-            mlflow.spark.log_model(model, artifact_path="model")
-
             results[name] = {
+                "run_id": run.info.run_id,
                 "val_rmse": val_rmse,
                 "test_rmse": test_rmse,
                 "val_mae": val_mae,
                 "test_mae": test_mae,
                 "val_smape": val_smape,
                 "test_smape": test_smape,
-                "model_obj": model,
             }
 
+            # optional cleanup references
+            del val_pred, test_pred, model
+        
     print("\n=== FINAL COMPARISON ===")
     for k, v in results.items():
         print(
@@ -261,19 +259,42 @@ def main():
     rmse_gap = second_metrics["val_rmse"] - best_metrics["val_rmse"]
 
     if rmse_gap < 1.0:
-        # If RMSE is very close, prefer better SMAPE
         if second_metrics["val_smape"] < best_metrics["val_smape"]:
             best_model_name = second_model_name
+            best_metrics = second_metrics
 
-    mlflow.set_tag("best_model", best_model_name)
+    print("Best model selected:", best_model_name)
 
-    best_model = results[best_model_name]["model_obj"]
+    best_estimator = models[best_model_name]
+
+    print("\n=== RETRAINING BEST MODEL FOR ARTIFACT SAVE ===")
+    best_model = best_estimator.fit(train_vec)
+
+    with mlflow.start_run(run_name=f"{best_model_name}_final") as final_run:
+        mlflow.log_param("model", best_model_name)
+        mlflow.log_param("feature_count", len(feature_cols))
+        mlflow.log_param("selected_as_best", True)
+
+        mlflow.log_metric("val_rmse", best_metrics["val_rmse"])
+        mlflow.log_metric("test_rmse", best_metrics["test_rmse"])
+        mlflow.log_metric("val_mae", best_metrics["val_mae"])
+        mlflow.log_metric("test_mae", best_metrics["test_mae"])
+        mlflow.log_metric("val_smape", best_metrics["val_smape"])
+        mlflow.log_metric("test_smape", best_metrics["test_smape"])
+
+        mlflow.spark.log_model(best_model, artifact_path="model")
 
     print("\n=== SAVING FINAL MODEL ===")
     best_model.write().overwrite().save("final_model_spark")
     print("Best Spark model saved to final_model_spark")
+    output = {
+        "best_run_id": final_run.info.run_id,
+        "best_model_name": best_model_name,
+        "best_metrics": best_metrics,
+    }
 
     spark.stop()
+    return output
 
 
 if __name__ == "__main__":

@@ -35,8 +35,6 @@ def download_file(url, output_path):
 def extract_taxi(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     print(f"Extracting taxi data for {year}-{month:02d}")
 
@@ -57,8 +55,6 @@ def extract_taxi(**context):
 def extract_weather(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
 
     print(f"Extracting weather data for {year}-{month:02d}")
 
@@ -131,8 +127,6 @@ def extract_weather(**context):
 def extract_lookup(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
-    # year = execution_date.year
-    # month = execution_date.month
     
     url = f"{NYCTAXI_URL}/misc/taxi_zone_lookup.csv"
     output_path = os.path.join(RAW_PATH, "lookup", f"taxi_zone_lookup_{year}-{month:02d}.csv")

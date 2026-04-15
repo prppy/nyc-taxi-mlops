@@ -1,38 +1,47 @@
 import os
 import re
 from dotenv import load_dotenv
-
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, hour, dayofweek, month, to_date, avg
 
 # Spark Setup 
-spark = SparkSession.builder \
-    .appName("EDA from Postgres") \
-    .config("spark.jars.packages", "org.postgresql:postgresql:42.7.3") \
-    .config("spark.sql.shuffle.partitions", "4") \
-    .config("spark.driver.memory", "1g") \
-    .config("spark.executor.memory", "1g") \
-    .getOrCreate()
+def get_spark():
+    return (
+        SparkSession.builder
+        .appName("NYC Taxi EDA")
+        .config("spark.jars.packages", "org.postgresql:postgresql:42.7.3")
+        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.driver.memory", "1g")
+        .config("spark.executor.memory", "1g")
+        .getOrCreate()
+    )
+
 
 # DB Config
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL not found")
+def get_db_config():
+    load_dotenv()
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL not found")
 
-match = re.match(r"postgresql://(.*):(.*)@(.*):(.*)/(.*)", DATABASE_URL)
-user, password, host, port, db = match.groups()
+    match = re.match(r"postgresql://(.*):(.*)@(.*):(.*)/(.*)", database_url)
+    if not match:
+        raise ValueError("DATABASE_URL is not in expected format")
 
-DB_URL = f"jdbc:postgresql://{host}:{port}/{db}"
-DB_PROPERTIES = {
-    "user": user,
-    "password": password,
-    "driver": "org.postgresql.Driver"
-}
+    user, password, host, port, db = match.groups()
 
+    db_url = f"jdbc:postgresql://{host}:{port}/{db}"
+    db_properties = {
+
+        "user": user,
+        "password": password,
+        "driver": "org.postgresql.Driver",
+    }
+
+    return db_url, db_properties
 
 # Loading of Tables
-def load_fact():
+def load_fact(spark, db_url, db_properties):
     print("\nLoading fact_trips_pickup...")
 
     query = """
@@ -45,25 +54,28 @@ def load_fact():
     """
 
     return spark.read.jdbc(
-        url=DB_URL,
+        url=db_url,
         table=query,
-        properties=DB_PROPERTIES
+        properties=db_properties,
     )
 
-def load_zone():
+def load_zone(spark, db_url, db_properties):
     print("Loading dim_zone...")
-    return spark.read.jdbc(
-        url=DB_URL,
-        table="dim_zone",
-        properties=DB_PROPERTIES
-    ).dropDuplicates(["location_id"])
+    return (
+        spark.read.jdbc(
+            url=db_url,
+            table="dim_zone",
+            properties=db_properties,
+        )
+        .dropDuplicates(["location_id"])
+    )
 
-def load_weather():
+def load_weather(spark, db_url, db_properties):
     print("Loading dim_weather...")
     return spark.read.jdbc(
-        url=DB_URL,
+        url=db_url,
         table="dim_weather",
-        properties=DB_PROPERTIES
+        properties=db_properties,
     )
 
 
@@ -134,54 +146,30 @@ def run_eda(df):
 # MAIN
 def main():
     print("\n=== STARTING EDA PIPELINE ===")
+    
+    spark = get_spark()
+    try:
+        db_url, db_properties = get_db_config()
 
-    fact = load_fact().select("pulocationid", "hour_ts", "demand")
-    zone = load_zone()
-    weather = load_weather()
+        fact = load_fact(spark, db_url, db_properties).select(
+            "pulocationid", "hour_ts", "demand"
+        )
+        zone = load_zone(spark, db_url, db_properties)
+        weather = load_weather(spark, db_url, db_properties)
 
-    fact = add_time_features(fact)
+        fact = add_time_features(fact)
 
-    df = join_data(fact, zone, weather)
-    df = df.filter(
-        (col("borough").isNotNull()) &
-        (~col("borough").isin("N/A", "Unknown"))
-    ).cache()
+        df = join_data(fact, zone, weather)
+        df = df.filter(
+            (col("borough").isNotNull())
+            & (~col("borough").isin("N/A", "Unknown"))
+        )
 
-    print("\nAvg demand by hour:")
-    df.groupBy("hour") \
-        .agg(avg("demand").alias("avg_demand")) \
-        .orderBy("hour") \
-        .show()
+        run_eda(df)
 
-    print("\nAvg demand by day of week:")
-    df.groupBy("day_of_week") \
-        .agg(avg("demand").alias("avg_demand")) \
-        .orderBy("day_of_week") \
-        .show()
-
-    print("\nAvg demand by borough:")
-    df.groupBy("borough") \
-        .agg(avg("demand").alias("avg_demand")) \
-        .orderBy("avg_demand") \
-        .show()
-
-# MAIN
-def main():
-    print("\n=== STARTING EDA PIPELINE ===")
-
-    fact = load_fact().select("pulocationid", "hour_ts", "demand")
-    zone = load_zone()
-    weather = load_weather()
-
-    fact = add_time_features(fact)
-
-    df = join_data(fact, zone, weather)
-    df = df.filter(
-    (col("borough").isNotNull()) &
-    (~col("borough").isin("N/A", "Unknown"))
-    )
-
-    run_eda(df)
+        print("\nEDA completed successfully.")
+    finally:
+        spark.stop()
 
     print("\nEDA completed successfully.")
 
