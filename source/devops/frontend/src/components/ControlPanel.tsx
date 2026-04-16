@@ -61,6 +61,8 @@ function DatePicker({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const selected = parseDate(value);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   useEffect(() => {
     if (!open) return;
@@ -98,7 +100,8 @@ function DatePicker({
           <DayPicker
             mode="single"
             selected={selected}
-            defaultMonth={selected}
+            defaultMonth={selected ?? today}
+            disabled={{ before: today }}
             onSelect={(date: Date | undefined) => {
               if (date) {
                 onChange(formatDate(date));
@@ -107,7 +110,7 @@ function DatePicker({
             }}
             showOutsideDays
             captionLayout="dropdown"
-            startMonth={new Date(2023, 0)}
+            startMonth={today}
             endMonth={new Date(2035, 11)}
             classNames={{
               selected: "rdp-day-selected",
@@ -123,10 +126,12 @@ function DatePicker({
 // hour picker
 function HourPicker({
   value,
+  dateValue,
   disabled,
   onChange,
 }: {
   value: string;
+  dateValue: string;
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
@@ -143,6 +148,11 @@ function HourPicker({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  const now = new Date();
+  const todayStr = formatDate(now);
+  const isToday = dateValue === todayStr;
+  const currentHour = now.getHours();
 
   const displayLabel = value
     ? `${String(value).padStart(2, "0")}:00`
@@ -171,29 +181,36 @@ function HourPicker({
 
       {open && (
         <div style={{ ...STYLES.dropdown, ...STYLES.hourDropdown }}>
-          {HOURS.map((hour) => (
-            <button
-              key={hour}
-              type="button"
-              style={{
-                ...STYLES.hourOption,
-                ...(String(hour) === String(value)
-                  ? STYLES.hourOptionSelected
-                  : {}),
-                ...(hovered === hour && String(hour) !== String(value)
-                  ? STYLES.hourOptionHovered
-                  : {}),
-              }}
-              onMouseEnter={() => setHovered(hour)}
-              onMouseLeave={() => setHovered(null)}
-              onClick={() => {
-                onChange(String(hour));
-                setOpen(false);
-              }}
-            >
-              {String(hour).padStart(2, "0")}:00
-            </button>
-          ))}
+          {HOURS.map((hour) => {
+            const isPast = isToday && Number(hour) < currentHour;
+            return (
+              <button
+                key={hour}
+                type="button"
+                disabled={isPast}
+                style={{
+                  ...STYLES.hourOption,
+                  ...(String(hour) === String(value)
+                    ? STYLES.hourOptionSelected
+                    : {}),
+                  ...(hovered === hour && String(hour) !== String(value)
+                    ? STYLES.hourOptionHovered
+                    : {}),
+                  ...(isPast ? STYLES.hourOptionDisabled : {}),
+                }}
+                onMouseEnter={() => !isPast && setHovered(hour)}
+                onMouseLeave={() => setHovered(null)}
+                onClick={() => {
+                  if (!isPast) {
+                    onChange(String(hour));
+                    setOpen(false);
+                  }
+                }}
+              >
+                {String(hour).padStart(2, "0")}:00
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -228,6 +245,7 @@ export function ControlPanel({
           <label style={STYLES.label}>Hour</label>
           <HourPicker
             value={hourValue}
+            dateValue={dateValue}
             disabled={locked}
             onChange={onHourChange}
           />
@@ -387,5 +405,9 @@ const STYLES: Record<string, CSSProperties> = {
   },
   hourOptionHovered: {
     background: `color-mix(in srgb, ${THEME.accent} 20%, transparent)`,
+  },
+  hourOptionDisabled: {
+    opacity: 0.35,
+    cursor: "not-allowed",
   },
 };
