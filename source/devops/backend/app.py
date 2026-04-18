@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from sqlalchemy import text
-from utils.db import get_engine
+from source.utils.db import get_engine
 
 load_dotenv()
 

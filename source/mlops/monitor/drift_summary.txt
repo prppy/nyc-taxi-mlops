@@ -1,0 +1,13 @@
+=== DRIFT REPORT ===
+Reference table: pickup_features before 2025-12-01 00:00:00
+Live table: pickup_features from 2025-12-01 00:00:00
+Avg feature drift score: 0.1874
+High-drift features: 4
+Critical features: 4
+Missing features: 0
+Excluded features: 2
+Label drift available: True
+Label drift alert: False
+Model drift available: False
+Model drift alert: False
+Should alert: True
