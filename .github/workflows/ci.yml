@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: "3.10"
       - name: Install dependencies
-        run: pip install ruff pytest flask
+        run: pip install ruff pytest flask flask-cors python-dotenv sqlalchemy
       - name: Lint Python code
         run: ruff check source/
       - name: Run tests
