@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 FEATURE_TABLE = "pickup_features"
-REPORT_PATH = "source/mlops/monitor"
-MODEL_PATH = "final_model_spark"
+REPORT_PATH = "/opt/airflow/source/mlops/monitor"
+MODEL_PATH = "/opt/airflow/source/mlops/final_model_spark" 
 
 BASELINE_RMSE = 40.0 # actual best validation/test RMSE from MLflow
 MODEL_DRIFT_THRESHOLD_RATIO = 0.30  # alert if live RMSE is 30% worse than baseline
@@ -651,6 +651,8 @@ def save_reports(report):
         f.write(f"Model drift available: {report['modelDrift'].get('available', False)}\n")
         f.write(f"Model drift alert: {report['modelDrift'].get('shouldAlert', False)}\n")
         f.write(f"Should alert: {should_alert(report)}\n")
+        
+    logger.info(f"Saving drift reports to: {REPORT_PATH}")
 
 
 def _build_flag_block(report):
