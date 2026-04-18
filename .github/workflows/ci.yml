@@ -35,7 +35,7 @@ jobs:
       - name: Lint Python code
         run: ruff check source/
       - name: Run tests
-        run: pytest tests/ -v
+        run: pytest source/ -v
 
   dag-validation:
     name: DAG Validation
