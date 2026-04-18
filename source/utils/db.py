@@ -1,15 +1,28 @@
+from functools import lru_cache
 import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
 WATERMARK_SECRET_KEY = os.getenv("WATERMARK_SECRET_KEY")
 
-engine = create_engine(DATABASE_URL)
+@lru_cache(maxsize=1)
+def get_engine():
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise ValueError("DATABASE_URL is not set")
+
+    return create_engine(
+        database_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+        future=True,
+    )
 
 def setup_tables():
+    engine = get_engine()
     with engine.begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS fact_trips_pickup (
@@ -70,15 +83,3 @@ def setup_tables():
             );
         """))
     print("Tables created successfully")
-    
-def load_features():
-    import pandas as pd
-    query = """
-    SELECT *
-    FROM pickup_features
-    """
-
-    df = pd.read_sql(query, engine)
-
-    print(f"Loaded from Postgres: {df.shape}")
-    return df

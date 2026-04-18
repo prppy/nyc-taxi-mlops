@@ -149,189 +149,190 @@ def main(start_date: str = None, end_date: str = None):
     print("\n=== STARTING PYSPARK TRAINING ===")
 
     spark = build_spark()
-    jdbc_url, jdbc_props = get_db_config()
+    try:
+        jdbc_url, jdbc_props = get_db_config()
 
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5003")
-    mlflow.set_tracking_uri(tracking_uri)
-    print("MLflow tracking URI:", mlflow.get_tracking_uri())
-    mlflow.set_experiment("nyc_taxi_training_spark")
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5003")
+        mlflow.set_tracking_uri(tracking_uri)
+        print("MLflow tracking URI:", mlflow.get_tracking_uri())
+        mlflow.set_experiment("nyc_taxi_training_spark")
 
-    # Fall back to full table if no window is specified (standalone runs)
-    if not start_date or not end_date:
-        from pyspark.sql.functions import min as spark_min, max as spark_max
-        bounds_df = spark.read.jdbc(
-            url=jdbc_url,
-            table="pickup_features",
-            properties=jdbc_props,
-        ).agg(
-            spark_min("hour_ts").alias("min_ts"),
-            spark_max("hour_ts").alias("max_ts"),
-        ).collect()[0]
-        start_date = str(bounds_df["min_ts"])[:10]
-        end_date = str(bounds_df["max_ts"])[:10]
-        print(f"No window provided — using full table: {start_date} to {end_date}")
-    else:
-        print(f"Training window: {start_date} to {end_date}")
+        # Fall back to full table if no window is specified (standalone runs)
+        if not start_date or not end_date:
+            from pyspark.sql.functions import min as spark_min, max as spark_max
+            bounds_df = spark.read.jdbc(
+                url=jdbc_url,
+                table="pickup_features",
+                properties=jdbc_props,
+            ).agg(
+                spark_min("hour_ts").alias("min_ts"),
+                spark_max("hour_ts").alias("max_ts"),
+            ).collect()[0]
+            start_date = str(bounds_df["min_ts"])[:10]
+            end_date = str(bounds_df["max_ts"])[:10]
+            print(f"No window provided — using full table: {start_date} to {end_date}")
+        else:
+            print(f"Training window: {start_date} to {end_date}")
 
-    print("\n=== LOADING DATA ===")
-    df = load_features(spark, jdbc_url, jdbc_props, start_date, end_date)
+        print("\n=== LOADING DATA ===")
+        df = load_features(spark, jdbc_url, jdbc_props, start_date, end_date)
 
-    print("\n=== FINDING SPLIT CUT-OFFS ===")
-    total_rows, train_cutoff, val_cutoff = get_time_cutoffs(df)
-    print("Total rows:", total_rows)
-    print("Train cutoff:", train_cutoff)
-    print("Val cutoff:", val_cutoff)
+        print("\n=== FINDING SPLIT CUT-OFFS ===")
+        total_rows, train_cutoff, val_cutoff = get_time_cutoffs(df)
+        print("Total rows:", total_rows)
+        print("Train cutoff:", train_cutoff)
+        print("Val cutoff:", val_cutoff)
 
-    print("\n=== SPLITTING DATA ===")
-    train, val, test = prepare_splits(df, train_cutoff, val_cutoff)
+        print("\n=== SPLITTING DATA ===")
+        train, val, test = prepare_splits(df, train_cutoff, val_cutoff)
 
-    # print("Train rows:", train.count())
-    # print("Val rows:", val.count())
-    # print("Test rows:", test.count())
+        # print("Train rows:", train.count())
+        # print("Val rows:", val.count())
+        # print("Test rows:", test.count())
 
-    feature_cols = get_feature_columns(df)
-    print("Number of feature columns:", len(feature_cols))
+        feature_cols = get_feature_columns(df)
+        print("Number of feature columns:", len(feature_cols))
 
-    print("\n=== ASSEMBLING FEATURES ===")
-    train_vec, val_vec, test_vec, _ = assemble_features(train, val, test, feature_cols)
+        print("\n=== ASSEMBLING FEATURES ===")
+        train_vec, val_vec, test_vec, _ = assemble_features(train, val, test, feature_cols)
 
-    # train_vec.cache()
-    # val_vec.cache()
-    # test_vec.cache()
+        # train_vec.cache()
+        # val_vec.cache()
+        # test_vec.cache()
 
-    # print("Vectorized train rows:", train_vec.count())
-    # print("Vectorized val rows:", val_vec.count())
-    # print("Vectorized test rows:", test_vec.count())
+        # print("Vectorized train rows:", train_vec.count())
+        # print("Vectorized val rows:", val_vec.count())
+        # print("Vectorized test rows:", test_vec.count())
 
-    models = {
-        "linear_regression": LinearRegression(
-            featuresCol="features",
-            labelCol="label",
-            predictionCol="prediction",
-            maxIter=20,
-            regParam=0.1,
-            elasticNetParam=0.0,
-        ),
-        "random_forest": RandomForestRegressor(
-            featuresCol="features",
-            labelCol="label",
-            predictionCol="prediction",
-            numTrees=40,
-            maxDepth=7,
-            seed=42,
-        ),
-        "gbt": GBTRegressor(
-            featuresCol="features",
-            labelCol="label",
-            predictionCol="prediction",
-            maxIter=30,
-            maxDepth=4,
-            stepSize=0.1,
-            seed=42,
-        )
-    }
+        models = {
+            "linear_regression": LinearRegression(
+                featuresCol="features",
+                labelCol="label",
+                predictionCol="prediction",
+                maxIter=20,
+                regParam=0.1,
+                elasticNetParam=0.0,
+            ),
+            "random_forest": RandomForestRegressor(
+                featuresCol="features",
+                labelCol="label",
+                predictionCol="prediction",
+                numTrees=40,
+                maxDepth=7,
+                seed=42,
+            ),
+            "gbt": GBTRegressor(
+                featuresCol="features",
+                labelCol="label",
+                predictionCol="prediction",
+                maxIter=30,
+                maxDepth=4,
+                stepSize=0.1,
+                seed=42,
+            )
+        }
 
-    results = {}
+        results = {}
 
-    for name, estimator in models.items():
-        print(f"\n--- {name.upper()} ---")
+        for name, estimator in models.items():
+            print(f"\n--- {name.upper()} ---")
 
-        with mlflow.start_run(run_name=name) as run:
-            model = estimator.fit(train_vec)
+            with mlflow.start_run(run_name=name) as run:
+                model = estimator.fit(train_vec)
 
-            val_pred = model.transform(val_vec)
-            test_pred = model.transform(test_vec)
+                val_pred = model.transform(val_vec)
+                test_pred = model.transform(test_vec)
 
-            val_rmse, val_mae, val_smape = evaluate_predictions(val_pred)
-            test_rmse, test_mae, test_smape = evaluate_predictions(test_pred)
+                val_rmse, val_mae, val_smape = evaluate_predictions(val_pred)
+                test_rmse, test_mae, test_smape = evaluate_predictions(test_pred)
 
-            print("Val RMSE:", val_rmse)
-            print("Test RMSE:", test_rmse)
-            print("Val MAE:", val_mae)
-            print("Test MAE:", test_mae)
-            print("Val SMAPE:", val_smape)
-            print("Test SMAPE:", test_smape)
+                print("Val RMSE:", val_rmse)
+                print("Test RMSE:", test_rmse)
+                print("Val MAE:", val_mae)
+                print("Test MAE:", test_mae)
+                print("Val SMAPE:", val_smape)
+                print("Test SMAPE:", test_smape)
 
-            mlflow.log_param("model", name)
+                mlflow.log_param("model", name)
+                mlflow.log_param("feature_count", len(feature_cols))
+
+                mlflow.log_metric("val_rmse", val_rmse)
+                mlflow.log_metric("test_rmse", test_rmse)
+                mlflow.log_metric("val_mae", val_mae)
+                mlflow.log_metric("test_mae", test_mae)
+                mlflow.log_metric("val_smape", val_smape)
+                mlflow.log_metric("test_smape", test_smape)
+
+                results[name] = {
+                    "run_id": run.info.run_id,
+                    "val_rmse": val_rmse,
+                    "test_rmse": test_rmse,
+                    "val_mae": val_mae,
+                    "test_mae": test_mae,
+                    "val_smape": val_smape,
+                    "test_smape": test_smape,
+                }
+
+                # optional cleanup references
+                del val_pred, test_pred, model
+            
+        print("\n=== FINAL COMPARISON ===")
+        for k, v in results.items():
+            print(
+                k,
+                "→ Val RMSE:", v["val_rmse"],
+                "Test RMSE:", v["test_rmse"],
+                "| Val MAE:", v["val_mae"],
+                "Test MAE:", v["test_mae"],
+                "| Val SMAPE:", v["val_smape"],
+                "Test SMAPE:", v["test_smape"],
+            )
+
+        print("\n=== MODEL SELECTION ===")
+
+        sorted_models = sorted(results.items(), key=lambda x: x[1]["val_rmse"])
+        best_model_name, best_metrics = sorted_models[0]
+        second_model_name, second_metrics = sorted_models[1]
+
+        rmse_gap = second_metrics["val_rmse"] - best_metrics["val_rmse"]
+
+        if rmse_gap < 1.0:
+            if second_metrics["val_smape"] < best_metrics["val_smape"]:
+                best_model_name = second_model_name
+                best_metrics = second_metrics
+
+        print("Best model selected:", best_model_name)
+
+        best_estimator = models[best_model_name]
+
+        print("\n=== RETRAINING BEST MODEL FOR ARTIFACT SAVE ===")
+        best_model = best_estimator.fit(train_vec)
+
+        with mlflow.start_run(run_name=f"{best_model_name}_final") as final_run:
+            mlflow.log_param("model", best_model_name)
             mlflow.log_param("feature_count", len(feature_cols))
+            mlflow.log_param("selected_as_best", True)
 
-            mlflow.log_metric("val_rmse", val_rmse)
-            mlflow.log_metric("test_rmse", test_rmse)
-            mlflow.log_metric("val_mae", val_mae)
-            mlflow.log_metric("test_mae", test_mae)
-            mlflow.log_metric("val_smape", val_smape)
-            mlflow.log_metric("test_smape", test_smape)
+            mlflow.log_metric("val_rmse", best_metrics["val_rmse"])
+            mlflow.log_metric("test_rmse", best_metrics["test_rmse"])
+            mlflow.log_metric("val_mae", best_metrics["val_mae"])
+            mlflow.log_metric("test_mae", best_metrics["test_mae"])
+            mlflow.log_metric("val_smape", best_metrics["val_smape"])
+            mlflow.log_metric("test_smape", best_metrics["test_smape"])
 
-            results[name] = {
-                "run_id": run.info.run_id,
-                "val_rmse": val_rmse,
-                "test_rmse": test_rmse,
-                "val_mae": val_mae,
-                "test_mae": test_mae,
-                "val_smape": val_smape,
-                "test_smape": test_smape,
-            }
+            mlflow.spark.log_model(best_model, artifact_path="model")
 
-            # optional cleanup references
-            del val_pred, test_pred, model
-        
-    print("\n=== FINAL COMPARISON ===")
-    for k, v in results.items():
-        print(
-            k,
-            "→ Val RMSE:", v["val_rmse"],
-            "Test RMSE:", v["test_rmse"],
-            "| Val MAE:", v["val_mae"],
-            "Test MAE:", v["test_mae"],
-            "| Val SMAPE:", v["val_smape"],
-            "Test SMAPE:", v["test_smape"],
-        )
-
-    print("\n=== MODEL SELECTION ===")
-
-    sorted_models = sorted(results.items(), key=lambda x: x[1]["val_rmse"])
-    best_model_name, best_metrics = sorted_models[0]
-    second_model_name, second_metrics = sorted_models[1]
-
-    rmse_gap = second_metrics["val_rmse"] - best_metrics["val_rmse"]
-
-    if rmse_gap < 1.0:
-        if second_metrics["val_smape"] < best_metrics["val_smape"]:
-            best_model_name = second_model_name
-            best_metrics = second_metrics
-
-    print("Best model selected:", best_model_name)
-
-    best_estimator = models[best_model_name]
-
-    print("\n=== RETRAINING BEST MODEL FOR ARTIFACT SAVE ===")
-    best_model = best_estimator.fit(train_vec)
-
-    with mlflow.start_run(run_name=f"{best_model_name}_final") as final_run:
-        mlflow.log_param("model", best_model_name)
-        mlflow.log_param("feature_count", len(feature_cols))
-        mlflow.log_param("selected_as_best", True)
-
-        mlflow.log_metric("val_rmse", best_metrics["val_rmse"])
-        mlflow.log_metric("test_rmse", best_metrics["test_rmse"])
-        mlflow.log_metric("val_mae", best_metrics["val_mae"])
-        mlflow.log_metric("test_mae", best_metrics["test_mae"])
-        mlflow.log_metric("val_smape", best_metrics["val_smape"])
-        mlflow.log_metric("test_smape", best_metrics["test_smape"])
-
-        mlflow.spark.log_model(best_model, artifact_path="model")
-
-    print("\n=== SAVING FINAL MODEL ===")
-    best_model.write().overwrite().save("final_model_spark")
-    print("Best Spark model saved to final_model_spark")
-    output = {
-        "best_run_id": final_run.info.run_id,
-        "best_model_name": best_model_name,
-        "best_metrics": best_metrics,
-    }
-
-    spark.stop()
-    return output
+        print("\n=== SAVING FINAL MODEL ===")
+        best_model.write().overwrite().save("final_model_spark")
+        print("Best Spark model saved to final_model_spark")
+        output = {
+            "best_run_id": final_run.info.run_id,
+            "best_model_name": best_model_name,
+            "best_metrics": best_metrics,
+        }
+        return output
+    finally:
+        spark.stop()
 
 
 if __name__ == "__main__":

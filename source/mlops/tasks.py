@@ -12,7 +12,7 @@ from mlops import train as train_module
 from mlops import drift_detector as drift_module
 from mlops.evaluate import evaluate_model_task as _evaluate_model
 from utils.config import MLOPS_START_MONTH, MLOPS_START_YEAR
-from utils.db import engine as db_engine
+from utils.db import get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,7 @@ def run_feature_engineering_task(**context): #date-based logic to backfill all d
     """
     Alternative (idempotent empty-table check): #checks if pickup_features is empty 
         _, end_date = get_fe_window(**context)
+        db_engine = get_engine()
         with db_engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(1) FROM pickup_features")).scalar()
         start_date = "2023-01-01" if count == 0 else (end_month - 1 month start)
@@ -158,6 +159,7 @@ def register_model_task(**context):
 
     # Mark training_triggered = TRUE in drift summary for this data month
     data_month = (datetime.strptime(ds, "%Y-%m-%d") - relativedelta(months=2)).replace(day=1).date()
+    db_engine = get_engine()
     try:
         with db_engine.begin() as conn:
             conn.execute(text("""
@@ -209,6 +211,7 @@ def calculate_and_log_drift_task(**context): #runs monthly regardless of trainin
     logger.info(f"Overall drift status: {overall_status}")
 
     # Write to DB
+    db_engine = get_engine()
     with db_engine.begin() as conn:
         # Upsert one row per data_month
         conn.execute(text("""

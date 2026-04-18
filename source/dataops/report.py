@@ -1,16 +1,14 @@
 import io
 import logging
 import pandas as pd
-
-
+from airflow.utils.email import send_email
 from typing import List
 
 from utils.config import get_month_year
-from utils.db import engine
+from utils.db import get_engine
 from utils.monitoring import monitor
 from utils.alerting import ALERT_EMAILS
 
-from airflow.utils.email import send_email
 
 logger = logging.getLogger(__name__)
 
@@ -348,78 +346,59 @@ WEATHER_COLUMNS = WEATHER_NUMERIC + ["date"]
 
 def load_fact_sample(period: str) -> pd.DataFrame:
     cols = ", ".join(FACT_COLUMNS)
+    engine = get_engine()
 
-    try:
-        return pd.read_sql(
-            f"""
-            SELECT {cols}
-            FROM (
-                SELECT {cols}
-                FROM fact_trips_pickup
-                WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
-            ) monthly_data
-            TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
-            LIMIT {SAMPLE_ROW_LIMIT}
-            """,
-            engine,
-            parse_dates=["hour_ts"],
-        )
-    except Exception:
-        return pd.read_sql(
-            f"""
+    sample_query = f"""
+        SELECT {cols}
+        FROM (
             SELECT {cols}
             FROM fact_trips_pickup
-            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
-            LIMIT {FALLBACK_ROW_LIMIT}
-            """,
-            engine,
-            parse_dates=["hour_ts"],
-        )
+            WHERE DATE_TRUNC('month', hour_ts) = :period_date
+        ) monthly_data
+        TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
+        LIMIT {SAMPLE_ROW_LIMIT}
+    """
 
-'''
-version 2: pickup-dropoff pair table
-def load_fact_sample(period: str) -> pd.DataFrame:
-    cols = ", ".join(FACT_COLUMNS)
+    fallback_query = f"""
+        SELECT {cols}
+        FROM fact_trips_pickup
+        WHERE DATE_TRUNC('month', hour_ts) = :period_date
+        LIMIT {FALLBACK_ROW_LIMIT}
+    """
 
-    try:
-        return pd.read_sql(
-            f"""
-            SELECT {cols}
-            FROM fact_trips_pair TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
-            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
-            LIMIT {SAMPLE_ROW_LIMIT}
-            """,
-            engine,
-            parse_dates=["hour_ts"],
-        )
-    except Exception:
-        return pd.read_sql(
-            f"""
-            SELECT {cols}
-            FROM fact_trips_pair
-            WHERE DATE_TRUNC('month', hour_ts) = '{period}-01'
-            LIMIT {FALLBACK_ROW_LIMIT}
-            """,
-            engine,
-            parse_dates=["hour_ts"],
-        )
-'''
-
+    with engine.connect() as conn:
+        try:
+            return pd.read_sql(
+                sample_query,
+                conn,
+                params={"period_date": f"{period}-01"},
+                parse_dates=["hour_ts"],
+            )
+        except Exception:
+            return pd.read_sql(
+                fallback_query,
+                conn,
+                params={"period_date": f"{period}-01"},
+                parse_dates=["hour_ts"],
+            )
 
 def load_weather(period: str) -> pd.DataFrame:
     cols = ", ".join(WEATHER_COLUMNS)
-    try:
-        return pd.read_sql(
-            f"""
-            SELECT {cols}
-            FROM dim_weather
-            WHERE DATE_TRUNC('month', date) = '{period}-01'
-            """,
-            engine,
-            parse_dates=["date"],
-        )
-    except Exception:
-        return pd.DataFrame()
+    engine = get_engine()
+
+    with engine.connect() as conn:
+        try:
+            return pd.read_sql(
+                f"""
+                SELECT {cols}
+                FROM dim_weather
+                WHERE DATE_TRUNC('month', date) = '{period}-01'
+                """,
+                conn,
+                parse_dates=["date"],
+            )
+        except Exception:
+            return pd.DataFrame()
 
 
 # email section builders

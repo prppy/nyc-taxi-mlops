@@ -24,9 +24,6 @@ sys.modules["airflow"] = MagicMock()
 sys.modules["airflow.utils"] = MagicMock()
 sys.modules["airflow.utils.email"] = MagicMock()
 
-# Set DATABASE_URL so module-level regex doesn't fail
-os.environ["DATABASE_URL"] = "postgresql://test:test@localhost:5432/testdb"
-
 # Walk up: tests/ → devops/ → source/
 SOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, SOURCE_ROOT)

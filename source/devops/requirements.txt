@@ -2,3 +2,4 @@ pyshp
 flask
 flask-cors
 python-dotenv
+sqlalchemy

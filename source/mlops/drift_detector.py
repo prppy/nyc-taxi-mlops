@@ -11,8 +11,9 @@ from pyspark.ml.feature import VectorAssembler
 from pyspark.ml import PipelineModel
 from pyspark.ml.regression import LinearRegressionModel, RandomForestRegressionModel, GBTRegressionModel
 from pyspark.ml.evaluation import RegressionEvaluator
-
+from sqlalchemy import text
 from airflow.utils.email import send_email
+from utils.db import get_engine
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -382,25 +383,20 @@ def detect_model_drift(live_df, model_path=MODEL_PATH, baseline_rmse=BASELINE_RM
         "shouldAlert": rmse_ratio >= MODEL_DRIFT_THRESHOLD_RATIO,
     }
     
-def load_reference_and_current_data(spark, db_url, db_properties):
-    latest_ts_query = f"""
-    (
-        SELECT MAX(hour_ts) AS max_hour_ts
-        FROM {FEATURE_TABLE}
-    ) AS latest_ts_subquery
-    """
+def get_latest_month_start():
+    engine = get_engine()
+    with engine.connect() as conn:
+        max_hour_ts = conn.execute(
+            text("SELECT MAX(hour_ts) FROM pickup_features")
+        ).scalar()
 
-    latest_ts_df = spark.read.jdbc(
-        url=db_url,
-        table=latest_ts_query,
-        properties=db_properties,
-    )
-
-    max_hour_ts = latest_ts_df.collect()[0]["max_hour_ts"]
     if max_hour_ts is None:
         raise ValueError("pickup_features is empty")
 
-    latest_month_start = max_hour_ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return max_hour_ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+def load_reference_and_current_data(spark, db_url, db_properties):
+    latest_month_start = get_latest_month_start()
 
     reference_query = f"""
     (
@@ -422,13 +418,13 @@ def load_reference_and_current_data(spark, db_url, db_properties):
         url=db_url,
         table=reference_query,
         properties=db_properties,
-    )
+    ).coalesce(1)
 
     live_df = spark.read.jdbc(
         url=db_url,
         table=live_query,
         properties=db_properties,
-    )
+    ).coalesce(1)
 
     return reference_df, live_df, latest_month_start
 

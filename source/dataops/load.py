@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from sqlalchemy import text
 from utils.config import PROCESSED_PATH, get_month_year
-from utils.db import engine
+from utils.db import get_engine
 from utils.monitoring import monitor
 import logging
 
@@ -14,7 +14,8 @@ def load_data(**context):
     year, month = get_month_year(execution_date)
 
     logger.info(f"Starting load for {year}-{month:02d}")
-
+    
+    engine = get_engine()
     with engine.begin() as conn:
         # load fact_trips_pickup
         pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year}-{month:02d}")

@@ -90,7 +90,7 @@ def load_fact(spark, db_url, db_properties, start_date, end_date):
         column="pulocationid",
         lowerBound=1,
         upperBound=300,
-        numPartitions=8,
+        numPartitions=2,
         properties=db_properties
     )
     
@@ -186,7 +186,7 @@ def add_weather_features(df):
 def add_lag_features(df):
 
     # ensure correct ordering
-    df = df.repartition(32, "pulocationid").sortWithinPartitions("hour_ts")
+    df = df.repartition(8, "pulocationid").sortWithinPartitions("hour_ts")
 
     window_spec = Window.partitionBy("pulocationid").orderBy("hour_ts")
 
@@ -292,7 +292,7 @@ def main(start_date, end_date):
         )
 
         # WRITE TO POSTGRES
-        df.coalesce(8).write \
+        df.coalesce(2).write \
             .format("jdbc") \
             .option("url", db_url) \
             .option("dbtable", "pickup_features") \
