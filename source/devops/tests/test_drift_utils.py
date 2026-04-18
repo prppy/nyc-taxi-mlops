@@ -11,12 +11,14 @@ from unittest.mock import MagicMock
 # Mock heavy dependencies before importing drift_detector
 # pandas, PySpark, dotenv, and airflow are not needed for pure function tests
 sys.modules["pandas"] = MagicMock()
-mock_spark_module = MagicMock()
-mock_spark_module.builder.appName.return_value.config.return_value.config.return_value.getOrCreate.return_value = MagicMock()
 sys.modules["pyspark"] = MagicMock()
 sys.modules["pyspark.sql"] = MagicMock()
 sys.modules["pyspark.sql.functions"] = MagicMock()
 sys.modules["pyspark.sql.types"] = MagicMock()
+sys.modules["pyspark.ml"] = MagicMock()
+sys.modules["pyspark.ml.feature"] = MagicMock()
+sys.modules["pyspark.ml.regression"] = MagicMock()
+sys.modules["pyspark.ml.evaluation"] = MagicMock()
 sys.modules["dotenv"] = MagicMock()
 sys.modules["airflow"] = MagicMock()
 sys.modules["airflow.utils"] = MagicMock()
@@ -25,8 +27,11 @@ sys.modules["airflow.utils.email"] = MagicMock()
 # Set DATABASE_URL so module-level regex doesn't fail
 os.environ["DATABASE_URL"] = "postgresql://test:test@localhost:5432/testdb"
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "source"))
-from mlops.monitor.drift_detector import ( # noqa: E402
+# Walk up: tests/ → devops/ → source/
+SOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, SOURCE_ROOT)
+
+from mlops.drift_detector import (  # noqa: E402
     compute_relative_shift,
     drift_label,
     should_alert,
