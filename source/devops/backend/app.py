@@ -1,9 +1,8 @@
-import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from sqlalchemy import text
-from utils.db import engine
+from source.utils.db import engine
 
 load_dotenv()
 
