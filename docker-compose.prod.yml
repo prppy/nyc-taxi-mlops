@@ -136,20 +136,16 @@ services:
       - appnet
 
   backend:
-    build:
-      context: .
-      dockerfile: source/devops/Dockerfile.backend
+    image: ghcr.io/prppy/nyc-taxi-backend:latest
     container_name: backend
     restart: unless-stopped
     working_dir: /app
     env_file:
       - .env
-      - ./source:/opt/airflow/source
     environment:
       DATABASE_URL: ${DATABASE_URL}
       MLFLOW_TRACKING_URI: http://mlflow:5000
-    volumes:
-      - .:/app
+      PYTHONPATH: /app
     ports:
       - "5002:5000"
     command: python source/devops/backend/app.py
@@ -159,9 +155,7 @@ services:
       - appnet
 
   frontend:
-    build:
-      context: .
-      dockerfile: source/devops/Dockerfile.frontend
+    image: ghcr.io/prppy/nyc-taxi-frontend:latest
     container_name: frontend
     restart: unless-stopped
     working_dir: /app/source/devops/frontend

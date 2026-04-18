@@ -21,7 +21,7 @@ on:
 jobs:
   sync-and-deploy:
     name: Sync Model & Redeploy App
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
 
@@ -36,10 +36,21 @@ jobs:
           echo "Timestamp: $(date -u)"
           echo "========================================"
 
-      - name: Rebuild and deploy application
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull latest images
         run: |
-          docker compose up -d --build frontend backend
-          echo "Application redeployed with latest model"
+          docker pull ghcr.io/${{ github.repository_owner }}/nyc-taxi-frontend:latest
+          docker pull ghcr.io/${{ github.repository_owner }}/nyc-taxi-backend:latest
+
+      - name: Redeploy application
+        run: |
+          docker compose -f docker-compose.prod.yml up -d frontend backend
 
       - name: Verify deployment
         run: |

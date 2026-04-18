@@ -74,7 +74,7 @@ with DAG(
         external_task_id="watermark_audit", #last task in dataops dag
         allowed_states=["success"],
         failed_states=["failed", "skipped"],
-        mode="poke",
+        mode="reschedule",
         timeout=7200, #2 hours timeout to prevent infinite waiting
         poke_interval=300, #check every 5 minutes
     )
