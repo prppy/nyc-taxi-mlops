@@ -15,6 +15,14 @@ STANDARD_TRIP_FACT_COLUMNS = [
     "congestion_surcharge", "airport_fee", "cbd_congestion_fee", "bcf", "sales_tax", "access_a_ride_flag", "shared_match_flag"
 ]
 
+# check if folder has actual parquet files
+def has_parquet(path):
+    if not os.path.exists(path):
+        return False
+    return any(
+        f.startswith("part-") and f.endswith(".parquet")
+        for f in os.listdir(path)
+    )
 
 @monitor
 def transform_fact(**context):
@@ -23,15 +31,6 @@ def transform_fact(**context):
 
     # output paths for both versions of the fact table (pickup and pair)
     pickup_path = os.path.join(PROCESSED_PATH, "fact_trips_pickup", f"{year_value}-{month_value:02d}")
-
-    # check if folder has actual parquet files
-    def has_parquet(path):
-        if not os.path.exists(path):
-            return False
-        return any(
-            f.startswith("part-") and f.endswith(".parquet")
-            for f in os.listdir(path)
-        )
 
     # skip if already processed
     if has_parquet(pickup_path):
@@ -325,6 +324,12 @@ def transform_dim_zone(**context):
 def transform_dim_weather(**context):
     execution_date = context["execution_date"]
     year, month = get_month_year(execution_date)
+    
+    # skip if already processed
+    output_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
+    if has_parquet(output_path):
+        print(f"Both fact tables exist for {year}-{month:02d}, skipping transform")
+        return
 
     spark = (
         SparkSession.builder
@@ -359,7 +364,6 @@ def transform_dim_weather(**context):
     df = df.dropDuplicates(["date", "borough"])
 
     # write to dim_weather table
-    output_path = os.path.join(PROCESSED_PATH, "dim_weather", f"{year}-{month:02d}")
     df.write.mode("overwrite").parquet(output_path)
 
     print("dim_weather written successfully")

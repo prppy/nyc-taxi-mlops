@@ -48,7 +48,7 @@ jobs:
       - name: Install dependencies
         run: pip install pytest
       - name: Validate DAG files
-        run: pytest tests/test_dag_import.py -v
+        run: pytest source/devops/tests/test_dag_import.py -v
 
   docker-build:
     name: Docker Build Check

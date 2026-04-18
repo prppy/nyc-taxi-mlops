@@ -10,7 +10,7 @@ import os
 import pytest
 
 # Paths to DAG files
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DAG_FILES = {
     "taxi_data_pipeline": os.path.join(PROJECT_ROOT, "source", "dataops", "dag.py"),
     "ml_training_pipeline": os.path.join(PROJECT_ROOT, "source", "mlops", "dags", "training_dag.py"),
@@ -76,3 +76,7 @@ class TestDAGDefinitions:
             source = f.read()
 
         assert ">>" in source, f"{dag_id} does not define task dependencies (>>)"
+
+
+if __name__ == "__main__":
+    print(PROJECT_ROOT)
