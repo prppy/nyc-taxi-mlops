@@ -14,7 +14,6 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(o
 DAG_FILES = {
     "taxi_data_pipeline": os.path.join(PROJECT_ROOT, "source", "dataops", "dag.py"),
     "ml_training_pipeline": os.path.join(PROJECT_ROOT, "source", "mlops", "dags", "training_dag.py"),
-    "drift_monitoring": os.path.join(PROJECT_ROOT, "source", "mlops", "dags", "monitoring_dag.py"),
 }
 
 

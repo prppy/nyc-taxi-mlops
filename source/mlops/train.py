@@ -47,10 +47,25 @@ def get_db_config():
     return jdbc_url, jdbc_props
 
 
-def load_features(spark, jdbc_url, jdbc_props):
+def load_features(spark, jdbc_url, jdbc_props, start_date: str, end_date: str):
+    """
+    Loads pickup_features filtered to a 3-year sliding window.
+
+    start_date / end_date: 'YYYY-MM-DD' strings.
+    The Spark JDBC subquery approach lets us push the date filter down to Postgres
+    so we never materialise the full historical table in memory.
+    """
+    query = f"""
+    (
+        SELECT *
+        FROM pickup_features
+        WHERE hour_ts >= '{start_date}'
+          AND hour_ts <= '{end_date}'
+    ) AS training_window
+    """
     df = spark.read.jdbc(
         url=jdbc_url,
-        table="pickup_features",
+        table=query,
         column="pulocationid",
         lowerBound=1,
         upperBound=300,
@@ -125,7 +140,12 @@ def evaluate_predictions(pred_df):
     return rmse, mae, smape
 
 
-def main():
+def main(start_date: str = None, end_date: str = None):
+    """
+    start_date / end_date: 'YYYY-MM-DD' strings defining the 3-year training window.
+    Passed in from train_model_task in tasks.py.
+    If not provided (e.g. running train.py standalone), defaults to all available data.
+    """
     print("\n=== STARTING PYSPARK TRAINING ===")
 
     spark = build_spark()
@@ -136,8 +156,25 @@ def main():
     print("MLflow tracking URI:", mlflow.get_tracking_uri())
     mlflow.set_experiment("nyc_taxi_training_spark")
 
+    # Fall back to full table if no window is specified (standalone runs)
+    if not start_date or not end_date:
+        from pyspark.sql.functions import min as spark_min, max as spark_max
+        bounds_df = spark.read.jdbc(
+            url=jdbc_url,
+            table="pickup_features",
+            properties=jdbc_props,
+        ).agg(
+            spark_min("hour_ts").alias("min_ts"),
+            spark_max("hour_ts").alias("max_ts"),
+        ).collect()[0]
+        start_date = str(bounds_df["min_ts"])[:10]
+        end_date = str(bounds_df["max_ts"])[:10]
+        print(f"No window provided — using full table: {start_date} to {end_date}")
+    else:
+        print(f"Training window: {start_date} to {end_date}")
+
     print("\n=== LOADING DATA ===")
-    df = load_features(spark, jdbc_url, jdbc_props)
+    df = load_features(spark, jdbc_url, jdbc_props, start_date, end_date)
 
     print("\n=== FINDING SPLIT CUT-OFFS ===")
     total_rows, train_cutoff, val_cutoff = get_time_cutoffs(df)

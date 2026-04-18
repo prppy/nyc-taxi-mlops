@@ -38,6 +38,36 @@ def setup_tables():
                 zone                TEXT,
                 service_zone        TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS drift_run_summary (
+                id                  SERIAL PRIMARY KEY,
+                data_month          DATE NOT NULL UNIQUE,
+                execution_date      DATE NOT NULL,
+                avg_feature_drift   DOUBLE PRECISION,
+                high_drift_count    INTEGER,
+                critical_count      INTEGER,
+                label_drift_score   DOUBLE PRECISION,
+                label_severity      TEXT,
+                label_should_alert  BOOLEAN,
+                model_rmse_ratio    DOUBLE PRECISION,
+                model_severity      TEXT,
+                model_should_alert  BOOLEAN,
+                overall_status      TEXT,
+                training_triggered  BOOLEAN DEFAULT FALSE,
+                created_at          TIMESTAMP DEFAULT NOW()
+            );
+
+            CREATE TABLE IF NOT EXISTS drift_feature_stats (
+                id              SERIAL PRIMARY KEY,
+                run_id          INTEGER REFERENCES drift_run_summary(id) ON DELETE CASCADE,
+                data_month      DATE NOT NULL,
+                feature         TEXT NOT NULL,
+                feature_type    TEXT,
+                reference_value DOUBLE PRECISION,
+                current_value   DOUBLE PRECISION,
+                drift_score     DOUBLE PRECISION,
+                severity        TEXT
+            );
         """))
     print("Tables created successfully")
     
