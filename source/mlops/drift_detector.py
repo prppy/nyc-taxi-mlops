@@ -475,6 +475,36 @@ def should_alert(report):
     return feature_alert or label_alert or model_alert
 
 
+def get_overall_status(report) -> str:
+    """
+    Returns a single overall drift status label across all three drift types:
+    feature drift, label drift, and model drift.
+
+    Levels (in priority order): Critical → High → Medium → Low
+    """
+    feature_critical = report["criticalCount"] > 0
+    label_severity = report.get("labelDrift", {}).get("severity", "Healthy")
+    label_critical = label_severity == "Critical"
+
+    if feature_critical or label_critical:
+        return "Critical"
+
+    feature_high = report["highDriftCount"] >= MIN_HIGH_DRIFT_FEATURES_FOR_ALERT
+    label_alert = report.get("labelDrift", {}).get("shouldAlert", False)
+    model_alert = report.get("modelDrift", {}).get("shouldAlert", False)
+
+    if feature_high or label_alert or model_alert:
+        return "High"
+
+    avg_feature_drift = report.get("avgDriftScore", 0.0)
+    label_drift_score = report.get("labelDrift", {}).get("driftScore", 0.0) or 0.0
+
+    if avg_feature_drift >= MEDIUM_THRESHOLD or label_drift_score >= MEDIUM_THRESHOLD:
+        return "Medium"
+
+    return "Low"
+
+
 def save_reports(report):
     os.makedirs(REPORT_PATH, exist_ok=True)
 
