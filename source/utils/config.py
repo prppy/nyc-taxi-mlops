@@ -20,7 +20,7 @@ BOROUGH_COORDS = {
 }
 
 # dates
-DATOPS_START_YEAR, DATAOPS_START_MONTH = 2023, 3
+DATAOPS_START_YEAR, DATAOPS_START_MONTH = 2023, 3
 MLOPS_START_YEAR, MLOPS_START_MONTH = 2025, 3
 
 # unwanted location ids
@@ -31,7 +31,7 @@ DATAOPS_DAG_ID = "taxi_data_pipeline"
 SCHEDULE_INTERVAL = "0 0 L * *" 
 TRAIN_DAG_ID = "taxi_train_pipeline"
 MONITOR_DAG_ID = "taxi_monitor_pipeline"
-RETRY_COUNT = 0 # TODO: set this to 1/2 for final submission
+RETRY_COUNT = 1 
 
 # helpers
 def get_raw_file_path(dataset, year, month):

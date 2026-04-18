@@ -7,6 +7,7 @@ import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, avg, stddev, expr
 from pyspark.sql.types import NumericType
+from pyspark.storagelevel import StorageLevel
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml import PipelineModel
 from pyspark.ml.regression import LinearRegressionModel, RandomForestRegressionModel, GBTRegressionModel
@@ -136,10 +137,16 @@ def parse_alert_emails():
 
 def load_table(spark, db_url, db_properties, table_name):
     logger.info(f"Loading table: {table_name}")
-    return spark.read.jdbc(
-        url=db_url,
-        table=table_name,
-        properties=db_properties,
+    return (
+        spark.read.format("jdbc")
+        .option("url", db_url)
+        .option("dbtable", table_name)
+        .option("user", db_properties["user"])
+        .option("password", db_properties["password"])
+        .option("driver", db_properties["driver"])
+        .option("fetchsize", 1000)
+        .option("numPartitions", 1)
+        .load()
     )
 
 
@@ -151,22 +158,92 @@ def get_numeric_columns(df):
     }
 
 
-def safe_mean(df, feature):
-    value = df.select(avg(col(feature)).alias("mean")).collect()[0]["mean"]
-    return float(value) if value is not None else 0.0
+def compute_summary_stats(df, features, percentiles=(0.5, 0.9)):
+    if not features:
+        return {}
+
+    agg_exprs = []
+
+    for feature in features:
+        agg_exprs.append(avg(col(feature)).alias(f"{feature}__mean"))
+        agg_exprs.append(stddev(col(feature)).alias(f"{feature}__std"))
+
+        for p in percentiles:
+            p_label = str(p).replace(".", "_")
+            agg_exprs.append(
+                expr(f"percentile_approx(`{feature}`, {p})").alias(f"{feature}__p{p_label}")
+            )
+
+    row = df.select(*agg_exprs).collect()[0]
+
+    stats = {}
+    for feature in features:
+        feature_stats = {}
+
+        mean_val = row[f"{feature}__mean"]
+        std_val = row[f"{feature}__std"]
+
+        feature_stats["mean"] = float(mean_val) if mean_val is not None else 0.0
+        feature_stats["std"] = float(std_val) if std_val is not None else 0.0
+
+        for p in percentiles:
+            p_label = str(p).replace(".", "_")
+            percentile_val = row[f"{feature}__p{p_label}"]
+            feature_stats[f"p{p_label}"] = float(percentile_val) if percentile_val is not None else 0.0
+
+        stats[feature] = feature_stats
+
+    return stats
 
 
-def safe_std(df, feature):
-    value = df.select(stddev(col(feature)).alias("std")).collect()[0]["std"]
-    return float(value) if value is not None else 0.0
+def materialize_df(df):
+    df = df.persist(StorageLevel.MEMORY_AND_DISK)
+    df.count()  # force one load now instead of many loads later
+    return df
 
 
-def safe_percentile(df, feature, p):
-    try:
-        value = df.select(expr(f"percentile_approx({feature}, {p}) as p")).collect()[0]["p"]
-        return float(value) if value is not None else 0.0
-    except Exception:
-        return 0.0
+def compute_means(df, features):
+    if not features:
+        return {}
+
+    agg_exprs = [avg(col(feature)).alias(feature) for feature in features]
+    row = df.select(*agg_exprs).collect()[0]
+
+    return {
+        feature: float(row[feature]) if row[feature] is not None else 0.0
+        for feature in features
+    }
+
+
+def compute_stds(df, features):
+    if not features:
+        return {}
+
+    agg_exprs = [stddev(col(feature)).alias(feature) for feature in features]
+    row = df.select(*agg_exprs).collect()[0]
+
+    result = {}
+    for feature in features:
+        value = row[feature]
+        result[feature] = float(value) if value is not None else 0.0
+    return result
+
+
+def compute_percentiles(df, features, p):
+    if not features:
+        return {}
+
+    agg_exprs = [
+        expr(f"percentile_approx(`{feature}`, {p})").alias(feature)
+        for feature in features
+    ]
+    row = df.select(*agg_exprs).collect()[0]
+
+    result = {}
+    for feature in features:
+        value = row[feature]
+        result[feature] = float(value) if value is not None else 0.0
+    return result
 
 
 def compute_relative_shift(reference_value, current_value):
@@ -242,20 +319,26 @@ def load_saved_model(model_path=MODEL_PATH):
 
 
 def detect_feature_drift(reference_df, live_df):
-    reference_numeric = get_numeric_columns(reference_df)
-    live_numeric = get_numeric_columns(live_df)
+    reference_numeric = set(get_numeric_columns(reference_df))
+    live_numeric = set(get_numeric_columns(live_df))
 
-    feature_stats = []
     missing_features = []
     excluded_features = list(EXCLUDED_FEATURES)
+    usable_features = []
 
     for feature in ALL_MONITORED_FEATURES:
         if feature not in reference_numeric or feature not in live_numeric:
             missing_features.append(feature)
-            continue
+        else:
+            usable_features.append(feature)
 
-        reference_mean = safe_mean(reference_df, feature)
-        current_mean = safe_mean(live_df, feature)
+    reference_stats = compute_summary_stats(reference_df, usable_features, percentiles=())
+    live_stats = compute_summary_stats(live_df, usable_features, percentiles=())
+
+    feature_stats = []
+    for feature in usable_features:
+        reference_mean = reference_stats[feature]["mean"]
+        current_mean = live_stats[feature]["mean"]
         drift_score = compute_relative_shift(reference_mean, current_mean)
 
         feature_stats.append({
@@ -298,17 +381,20 @@ def detect_label_drift(reference_df, live_df, label_col="target_demand"):
             "reason": f"{label_col} missing from one or both tables"
         }
 
-    reference_mean = safe_mean(reference_df, label_col)
-    live_mean = safe_mean(live_df, label_col)
+    reference_stats = compute_summary_stats(reference_df, [label_col], percentiles=(0.5, 0.9))
+    live_stats = compute_summary_stats(live_df, [label_col], percentiles=(0.5, 0.9))
 
-    reference_std = safe_std(reference_df, label_col)
-    live_std = safe_std(live_df, label_col)
+    ref = reference_stats[label_col]
+    cur = live_stats[label_col]
 
-    reference_p50 = safe_percentile(reference_df, label_col, 0.5)
-    live_p50 = safe_percentile(live_df, label_col, 0.5)
-
-    reference_p90 = safe_percentile(reference_df, label_col, 0.9)
-    live_p90 = safe_percentile(live_df, label_col, 0.9)
+    reference_mean = ref["mean"]
+    live_mean = cur["mean"]
+    reference_std = ref["std"]
+    live_std = cur["std"]
+    reference_p50 = ref["p0_5"]
+    live_p50 = cur["p0_5"]
+    reference_p90 = ref["p0_9"]
+    live_p90 = cur["p0_9"]
 
     drift_score = compute_relative_shift(reference_mean, live_mean)
 
@@ -414,23 +500,38 @@ def load_reference_and_current_data(spark, db_url, db_properties):
     ) AS current_subquery
     """
 
-    reference_df = spark.read.jdbc(
-        url=db_url,
-        table=reference_query,
-        properties=db_properties,
-    ).coalesce(1)
+    reference_df = (
+        spark.read.format("jdbc")
+        .option("url", db_url)
+        .option("dbtable", reference_query)
+        .option("user", db_properties["user"])
+        .option("password", db_properties["password"])
+        .option("driver", db_properties["driver"])
+        .option("fetchsize", 1000)
+        .option("numPartitions", 1)
+        .load()
+    )
 
-    live_df = spark.read.jdbc(
-        url=db_url,
-        table=live_query,
-        properties=db_properties,
-    ).coalesce(1)
+    live_df = (
+        spark.read.format("jdbc")
+        .option("url", db_url)
+        .option("dbtable", live_query)
+        .option("user", db_properties["user"])
+        .option("password", db_properties["password"])
+        .option("driver", db_properties["driver"])
+        .option("fetchsize", 1000)
+        .option("numPartitions", 1)
+        .load()
+    )
 
     return reference_df, live_df, latest_month_start
 
 
 def detect_drift():
     spark = get_spark()
+    reference_df = None
+    live_df = None
+
     try:
         db_config = get_db_config()
         reference_df, live_df, latest_month = load_reference_and_current_data(
@@ -438,6 +539,9 @@ def detect_drift():
             db_config["db_url"],
             db_config["db_properties"],
         )
+
+        reference_df = materialize_df(reference_df)
+        live_df = materialize_df(live_df)
 
         feature_report = detect_feature_drift(reference_df, live_df)
         label_report = detect_label_drift(reference_df, live_df, label_col="target_demand")
@@ -455,9 +559,13 @@ def detect_drift():
             "labelDrift": label_report,
             "modelDrift": model_report,
         }
-    finally:
-        spark.stop()
 
+    finally:
+        if reference_df is not None:
+            reference_df.unpersist(blocking=False)
+        if live_df is not None:
+            live_df.unpersist(blocking=False)
+        spark.stop()
 
 def should_alert(report):
     feature_alert = (
@@ -731,24 +839,3 @@ def send_drift_alert(report):
     )
     logger.info("Drift alert email sent.")
 
-
-# if __name__ == "__main__":
-#     report = detect_drift()
-#     save_reports(report)
-
-#     print("\n=== DRIFT RESPONSE ===")
-#     print(f"Features returned: {len(report['featureStats'])}")
-#     print(f"Missing features: {len(report['missingFeatures'])}")
-#     print(f"Excluded features: {len(report['excludedFeatures'])}")
-#     print(f"Avg feature drift score: {report['avgDriftScore']:.4f}")
-#     print(f"High-drift features: {report['highDriftCount']}")
-#     print(f"Critical features: {report['criticalCount']}")
-#     print(f"Label drift: {report['labelDrift']}")
-#     print(f"Model drift: {report['modelDrift']}")
-#     print(f"Should alert: {should_alert(report)}")
-
-#     for row in report["featureStats"][:10]:
-#         print(row)
-
-#     if should_alert(report):
-#         send_drift_alert(report)

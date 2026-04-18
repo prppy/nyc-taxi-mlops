@@ -71,11 +71,11 @@ with DAG(
     wait_for_data = ExternalTaskSensor(
         task_id="wait_for_data_pipeline",
         external_dag_id=DATAOPS_DAG_ID,
-        external_task_id="watermark_audit", #last task in dataops dag
+        external_task_id="watermark_audit", # last task in dataops dag
         allowed_states=["success"],
         failed_states=["failed", "skipped"],
         mode="reschedule",
-        timeout=7200, #2 hours timeout to prevent infinite waiting
+        timeout=7200, # 2 hours timeout to prevent infinite waiting
         poke_interval=300, #check every 5 minutes
     )
 
@@ -86,6 +86,7 @@ with DAG(
         task_id="run_eda",
         python_callable=run_eda_task,
         trigger_rule="none_failed_min_one_success",
+        pool="global_serial_pool",
     )
 
     feature_eng_task = PythonOperator(
