@@ -71,8 +71,26 @@ jobs:
 
       - name: Health check
         run: |
-          sleep 15
-          curl -f http://localhost:8080/ || echo "Airflow health check pending"
-          curl -f http://localhost:5000/ || echo "MLflow health check pending"
-          curl -f http://localhost:5002/ || echo "Backend health check pending"
-          curl -f http://localhost:3001/ || echo "Frontend health check pending"
+          check_url() {
+            local name=$1
+            local url=$2
+            local attempts=12
+            local wait_seconds=15
+
+            for i in $(seq 1 $attempts); do
+              if curl -fsS "$url" > /dev/null; then
+                echo "$name is up"
+                return 0
+              fi
+              echo "$name not ready yet (attempt $i/$attempts)"
+              sleep $wait_seconds
+            done
+
+            echo "$name failed health check"
+            return 1
+          }
+
+          check_url "Airflow" "http://localhost:8080/"
+          check_url "MLflow" "http://localhost:5000/"
+          check_url "Backend" "http://localhost:5002/"
+          check_url "Frontend" "http://localhost:3001/"
