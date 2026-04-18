@@ -26,7 +26,7 @@ sys.modules["airflow.utils.email"] = MagicMock()
 os.environ["DATABASE_URL"] = "postgresql://test:test@localhost:5432/testdb"
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "source"))
-from mlops.monitor.drift_detector import (
+from mlops.monitor.drift_detector import ( # noqa: E402
     compute_relative_shift,
     drift_label,
     should_alert,

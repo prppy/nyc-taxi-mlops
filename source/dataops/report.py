@@ -563,5 +563,5 @@ def report_data(**context):
 
         _send_email_with_charts(subject, body, charts, period)
         logger.info(f"Report email sent for {period} ({len(flags)} flags)")
-    except:
-        logger.info("Reporting was not successful. Skipped.")
+    except Exception as e:
+        logger.info(f"Reporting was not successful. Skipped. Error: {e}")

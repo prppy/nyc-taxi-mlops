@@ -1,8 +1,6 @@
 """
 Unit tests for model evaluation logic.
 """
-import pytest
-
 
 class TestEvaluationGuardrails:
     """Test the metric comparison logic used in evaluate.py"""
