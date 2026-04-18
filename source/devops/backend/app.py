@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 from sqlalchemy import text
-from source.utils.db import engine
+from source.utils.db import get_engine
 
 load_dotenv()
 
@@ -33,7 +33,7 @@ def get_drift():
     }
     """
     month_param = request.args.get("month")  # e.g. "2025-01"
-
+    engine = get_engine()
     with engine.connect() as conn:
         if month_param:
             summary_row = conn.execute(text("""
