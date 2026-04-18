@@ -1,10 +1,5 @@
 import pandas as pd
-from sqlalchemy import create_engine
-
-# 1. Connect to Postgres from your Mac (localhost)
-# Change the port or password if your docker-compose is different
-DB_URL = "postgresql://airflow:airflow@localhost:5432/taxi_db"
-engine = create_engine(DB_URL)
+from utils.db import engine
 
 print("Loading CSV...")
 try:

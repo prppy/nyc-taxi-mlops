@@ -2,16 +2,13 @@ import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from utils.db import engine
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
-
-
-def get_engine():
-    return create_engine(os.getenv("DATABASE_URL"))
 
 
 @app.route("/")
@@ -38,7 +35,6 @@ def get_drift():
     """
     month_param = request.args.get("month")  # e.g. "2025-01"
 
-    engine = get_engine()
     with engine.connect() as conn:
         if month_param:
             summary_row = conn.execute(text("""
@@ -97,7 +93,6 @@ def get_drift_history():
     Returns drift summary for all available months, sorted chronologically.
     Useful for the frontend to show a timeline of drift over time.
     """
-    engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT
