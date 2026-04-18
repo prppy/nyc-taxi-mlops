@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 from airflow.utils.email import send_email
 from typing import List
+from sqlalchemy import text
 
 from utils.config import get_month_year
 from utils.db import get_engine
@@ -348,23 +349,23 @@ def load_fact_sample(period: str) -> pd.DataFrame:
     cols = ", ".join(FACT_COLUMNS)
     engine = get_engine()
 
-    sample_query = f"""
+    sample_query = text(f"""
         SELECT {cols}
         FROM (
             SELECT {cols}
             FROM fact_trips_pickup
-            WHERE DATE_TRUNC('month', hour_ts) = :period_date
+            WHERE DATE_TRUNC('month', hour_ts) = DATE_TRUNC('month', CAST(:period_date AS TIMESTAMP))
         ) monthly_data
         TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
         LIMIT {SAMPLE_ROW_LIMIT}
-    """
+    """)
 
-    fallback_query = f"""
+    fallback_query = text(f"""
         SELECT {cols}
         FROM fact_trips_pickup
-        WHERE DATE_TRUNC('month', hour_ts) = :period_date
+        WHERE DATE_TRUNC('month', hour_ts) = DATE_TRUNC('month', CAST(:period_date AS TIMESTAMP))
         LIMIT {FALLBACK_ROW_LIMIT}
-    """
+    """)
 
     with engine.connect() as conn:
         try:
