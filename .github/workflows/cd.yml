@@ -49,8 +49,6 @@ jobs:
     needs: build-and-push
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -65,10 +63,16 @@ jobs:
 
       - name: Deploy application stack
         run: |
-          docker compose -f docker-compose.prod.yml up -d frontend backend
+          cd /home/githubrunner/nyc-taxi-mlops
+          git pull origin main
+          docker compose -f docker-compose.prod.yml pull frontend backend
+          docker compose -f docker-compose.prod.yml up -d --build airflow-webserver airflow-scheduler
+          docker compose -f docker-compose.prod.yml up -d mlflow backend frontend
 
       - name: Health check
         run: |
-          sleep 10
+          sleep 15
+          curl -f http://localhost:8080/ || echo "Airflow health check pending"
+          curl -f http://localhost:5000/ || echo "MLflow health check pending"
           curl -f http://localhost:5002/ || echo "Backend health check pending"
           curl -f http://localhost:3001/ || echo "Frontend health check pending"

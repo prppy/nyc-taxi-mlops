@@ -2,7 +2,7 @@ name: Model Sync, DevOps/MLOps Integration
 
 # This workflow synchronises DevOps with MLOps:
 # When a new model version is registered in MLflow, the application stack is redeployed to pick up the latest model.
-# Application will always serve predictions from the most current model.
+# The application will then serve predictions using the latest deployed model setup.
 
 # Trigger methods:
 # 1. Automatic: Airflow register_model task calls GitHub API (repository_dispatch)
@@ -23,8 +23,6 @@ jobs:
     name: Sync Model & Redeploy App
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
-
       - name: Log model sync event
         run: |
           echo "========================================"
@@ -43,17 +41,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull latest images
-        run: |
-          docker pull ghcr.io/${{ github.repository_owner }}/nyc-taxi-frontend:latest
-          docker pull ghcr.io/${{ github.repository_owner }}/nyc-taxi-backend:latest
-
       - name: Redeploy application
         run: |
-          docker compose -f docker-compose.prod.yml up -d frontend backend
+          cd /home/githubrunner/nyc-taxi-mlops
+          git pull origin main
+          docker compose -f docker-compose.prod.yml pull frontend backend
+          docker compose -f docker-compose.prod.yml up -d mlflow backend frontend
 
       - name: Verify deployment
         run: |
           sleep 10
+          curl -f http://localhost:5000/ && echo "MLflow is running" || echo "MLflow health check pending"
           curl -f http://localhost:5002/ && echo "Backend is running" || echo "Backend health check pending"
           curl -f http://localhost:3001/ && echo "Frontend is running" || echo "Frontend health check pending"
+          
