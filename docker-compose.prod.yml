@@ -146,6 +146,8 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       MLFLOW_TRACKING_URI: http://mlflow:5000
       PYTHONPATH: /app
+    volumes:
+      - .:/app
     ports:
       - "5002:5000"
     command: python source/devops/backend/app.py
