@@ -190,9 +190,6 @@ function RankItem({
       </div>
 
       <div style={STYLES.scoreBlock}>
-        <span style={{ ...STYLES.score, color: scoreFillColor(row.score) }}>
-          {formatDemandScore(row.score)}
-        </span>
         {/* TODO: do we show exact predicted demand? */}
         <span style={STYLES.rides}>{row.predictedDemand} rides</span>
       </div>
