@@ -13,10 +13,17 @@ export type PredictionRow = {
   source: "selected" | "nearby";
 };
 
+export type WeatherSnapshotApi = {
+  temperature_mean: number | null;
+  precipitation_sum: number | null;
+  wind_speed_max: number | null;
+  borough?: string | null;
+};
+
 export type DemandModelPredictionResponse = {
   includedZoneIds: number[];
   predictions: PredictionRow[];
-  weatherByZoneId: Record<number, WeatherSnapshot>;
+  weatherByZoneId: Record<number, WeatherSnapshotApi>;
 };
 
 

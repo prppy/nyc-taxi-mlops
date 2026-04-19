@@ -198,6 +198,21 @@ export default function App() {
         timestamp,
       );
 
+      const normalizedWeatherByZoneId: Record<number, WeatherSnapshot> =
+        Object.fromEntries(
+          Object.entries(predictionResponse.weatherByZoneId).map(
+            ([zoneId, weather]) => [
+              Number(zoneId),
+              {
+                temperatureMean: weather.temperature_mean ?? null,
+                precipitationSum: weather.precipitation_sum ?? null,
+                windSpeedMax: weather.wind_speed_max ?? null,
+                borough: weather.borough ?? null,
+              },
+            ],
+          ),
+        ) as Record<number, WeatherSnapshot>;
+
       const sortedPredictions = [...predictionResponse.predictions].sort(
         (a, b) => b.score - a.score,
       );
@@ -209,7 +224,7 @@ export default function App() {
         new Map(predictionResponse.predictions.map((row) => [row.zoneId, row])),
       );
       setIncludedZoneIds(new Set(predictionResponse.includedZoneIds));
-      setWeatherByZoneId(predictionResponse.weatherByZoneId);
+      setWeatherByZoneId(normalizedWeatherByZoneId);
       setLocked(true);
 
       if (topPrediction && topZone) {
@@ -229,7 +244,7 @@ export default function App() {
       setLoading(false);
     }
   };
-
+  
   const onResetSelection = () => {
     setLocked(false);
     setSelectedZoneIds([]);

@@ -41,8 +41,8 @@ FEATURE_COLUMNS = [
     "rolling_mean_3h",
 ]
 
-DEMAND_SCORE_P10 = 23.0
-DEMAND_SCORE_P90 = 196.0
+DEMAND_SCORE_P20 = 23.0
+DEMAND_SCORE_P80 = 196.0
 
 
 def get_spark():

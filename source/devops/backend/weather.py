@@ -156,8 +156,66 @@ def apply_weather_features(rows, weather_by_zone):
 
     return enriched_rows
 
+# def get_lag_features(included_zone_ids, timestamp):
+#     engine = get_engine()
+
+#     query = text("""
+#         SELECT pulocationid, hour_ts, demand
+#         FROM fact_trips_pickup
+#         WHERE pulocationid = ANY(:zone_ids)
+#           AND hour_ts >= :min_ts
+#           AND hour_ts <= :max_ts
+#     """)
+
+#     min_ts = timestamp - pd.Timedelta(hours=24)
+#     max_ts = timestamp - pd.Timedelta(hours=1)
+
+#     with engine.connect() as conn:
+#         df = pd.read_sql(
+#             query,
+#             conn,
+#             params={
+#                 "zone_ids": included_zone_ids,
+#                 "min_ts": min_ts,
+#                 "max_ts": max_ts,
+#             },
+#             parse_dates=["hour_ts"],
+#         )
+
+#     lag_map = {}
+
+#     for zone_id in included_zone_ids:
+#         zone_df = df[df["pulocationid"] == zone_id].copy()
+
+#         lag_1_ts = timestamp - pd.Timedelta(hours=1)
+#         lag_2_ts = timestamp - pd.Timedelta(hours=2)
+#         lag_24_ts = timestamp - pd.Timedelta(hours=24)
+#         roll_start_ts = timestamp - pd.Timedelta(hours=3)
+
+#         lag_1 = zone_df.loc[zone_df["hour_ts"] == lag_1_ts, "demand"]
+#         lag_2 = zone_df.loc[zone_df["hour_ts"] == lag_2_ts, "demand"]
+#         lag_24 = zone_df.loc[zone_df["hour_ts"] == lag_24_ts, "demand"]
+
+#         rolling_df = zone_df[
+#             (zone_df["hour_ts"] >= roll_start_ts) &
+#             (zone_df["hour_ts"] <= lag_1_ts)
+#         ]
+
+#         lag_map[zone_id] = {
+#             "demand_lag_1": float(lag_1.iloc[0]) if not lag_1.empty else 0.0,
+#             "demand_lag_2": float(lag_2.iloc[0]) if not lag_2.empty else 0.0,
+#             "demand_lag_24": float(lag_24.iloc[0]) if not lag_24.empty else 0.0,
+#             "rolling_mean_3h": float(rolling_df["demand"].mean()) if not rolling_df.empty else 0.0,
+#         }
+#     logger.info("Lag query returned %s rows", len(df))
+#     return lag_map
+
 def get_lag_features(included_zone_ids, timestamp):
     engine = get_engine()
+
+    ts = pd.Timestamp(timestamp).tz_localize(None)
+    min_ts = ts - pd.Timedelta(hours=24)
+    max_ts = ts - pd.Timedelta(hours=1)
 
     query = text("""
         SELECT pulocationid, hour_ts, demand
@@ -167,49 +225,137 @@ def get_lag_features(included_zone_ids, timestamp):
           AND hour_ts <= :max_ts
     """)
 
-    min_ts = timestamp - pd.Timedelta(hours=24)
-    max_ts = timestamp - pd.Timedelta(hours=1)
-
     with engine.connect() as conn:
         df = pd.read_sql(
-            query,
-            conn,
-            params={
-                "zone_ids": included_zone_ids,
-                "min_ts": min_ts,
-                "max_ts": max_ts,
-            },
+            query, conn,
+            params={"zone_ids": included_zone_ids, "min_ts": min_ts, "max_ts": max_ts},
             parse_dates=["hour_ts"],
         )
 
-    lag_map = {}
+    if not df.empty:
+        df["hour_ts"] = pd.to_datetime(df["hour_ts"]).dt.tz_localize(None)
 
+    logger.info("Lag query returned %s rows", len(df))
+    logger.info("Sample hour_ts from DB: %s", df["hour_ts"].head().tolist() if not df.empty else "empty")
+
+    historical_fallbacks = get_historical_lag_fallbacks(included_zone_ids, ts, engine)
+
+    lag_map = {}
     for zone_id in included_zone_ids:
         zone_df = df[df["pulocationid"] == zone_id].copy()
 
-        lag_1_ts = timestamp - pd.Timedelta(hours=1)
-        lag_2_ts = timestamp - pd.Timedelta(hours=2)
-        lag_24_ts = timestamp - pd.Timedelta(hours=24)
-        roll_start_ts = timestamp - pd.Timedelta(hours=3)
+        lag_1_ts = ts - pd.Timedelta(hours=1)
+        lag_2_ts = ts - pd.Timedelta(hours=2)
+        lag_24_ts = ts - pd.Timedelta(hours=24)
+        roll_start_ts = ts - pd.Timedelta(hours=3)
 
         lag_1 = zone_df.loc[zone_df["hour_ts"] == lag_1_ts, "demand"]
         lag_2 = zone_df.loc[zone_df["hour_ts"] == lag_2_ts, "demand"]
         lag_24 = zone_df.loc[zone_df["hour_ts"] == lag_24_ts, "demand"]
-
         rolling_df = zone_df[
             (zone_df["hour_ts"] >= roll_start_ts) &
             (zone_df["hour_ts"] <= lag_1_ts)
         ]
 
+        fb = historical_fallbacks.get(zone_id, {})
+
         lag_map[zone_id] = {
-            "demand_lag_1": float(lag_1.iloc[0]) if not lag_1.empty else 0.0,
-            "demand_lag_2": float(lag_2.iloc[0]) if not lag_2.empty else 0.0,
-            "demand_lag_24": float(lag_24.iloc[0]) if not lag_24.empty else 0.0,
-            "rolling_mean_3h": float(rolling_df["demand"].mean()) if not rolling_df.empty else 0.0,
+            "demand_lag_1":   float(lag_1.iloc[0])           if not lag_1.empty     else fb.get("lag_1", 0.0),
+            "demand_lag_2":   float(lag_2.iloc[0])           if not lag_2.empty     else fb.get("lag_2", 0.0),
+            "demand_lag_24":  float(lag_24.iloc[0])          if not lag_24.empty    else fb.get("lag_24", 0.0),
+            "rolling_mean_3h": float(rolling_df["demand"].mean()) if not rolling_df.empty else fb.get("rolling_mean_3h", 0.0),
         }
-    logger.info("Lag query returned %s rows", len(df))
+
+        logger.info(
+            "Lag features for zone %s | lag_1=%s lag_2=%s lag_24=%s rolling=%s",
+            zone_id,
+            lag_map[zone_id]["demand_lag_1"],
+            lag_map[zone_id]["demand_lag_2"],
+            lag_map[zone_id]["demand_lag_24"],
+            lag_map[zone_id]["rolling_mean_3h"],
+        )
+
     return lag_map
 
+
+def get_historical_lag_fallbacks(zone_ids, timestamp, engine):
+    """
+    For each lag slot, fetches the historical average demand for that zone
+    at the exact hour that slot corresponds to, on the same day-of-week.
+
+      lag_1        -> avg demand at (hour - 1h), same dow
+      lag_2        -> avg demand at (hour - 2h), same dow
+      lag_24       -> avg demand at (hour - 24h) i.e. same hour, previous dow
+      rolling_mean_3h -> avg of the 3 hours leading up to the prediction hour, same dow
+    """
+    pg_dow = (timestamp.weekday() + 1) % 7  # Python Mon=0 -> Postgres Sun=0
+    hour = timestamp.hour
+
+    query = text("""
+        SELECT
+            pulocationid,
+            EXTRACT(HOUR FROM hour_ts)::int AS hour_of_day,
+            EXTRACT(DOW  FROM hour_ts)::int AS day_of_week,
+            AVG(demand) AS avg_demand
+        FROM fact_trips_pickup
+        WHERE pulocationid = ANY(:zone_ids)
+          AND (
+              -- lag_1: one hour before
+              (EXTRACT(HOUR FROM hour_ts)::int = :lag_1_hour  AND EXTRACT(DOW FROM hour_ts)::int = :dow)
+              -- lag_2: two hours before
+           OR (EXTRACT(HOUR FROM hour_ts)::int = :lag_2_hour  AND EXTRACT(DOW FROM hour_ts)::int = :dow)
+              -- lag_24: same hour, previous day-of-week
+           OR (EXTRACT(HOUR FROM hour_ts)::int = :hour        AND EXTRACT(DOW FROM hour_ts)::int = :prev_dow)
+              -- rolling: hours h-3, h-2, h-1 on same dow (captured by lag_1/lag_2 + one more)
+           OR (EXTRACT(HOUR FROM hour_ts)::int = :lag_3_hour  AND EXTRACT(DOW FROM hour_ts)::int = :dow)
+          )
+        GROUP BY pulocationid, EXTRACT(HOUR FROM hour_ts)::int, EXTRACT(DOW FROM hour_ts)::int
+    """)
+
+    prev_dow = (pg_dow - 1) % 7
+
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params={
+            "zone_ids": zone_ids,
+            "hour":      hour,
+            "lag_1_hour": (hour - 1) % 24,
+            "lag_2_hour": (hour - 2) % 24,
+            "lag_3_hour": (hour - 3) % 24,
+            "dow":       pg_dow,
+            "prev_dow":  prev_dow,
+        })
+
+    if df.empty:
+        logger.warning("No historical lag fallback data found for hour=%s dow=%s", hour, pg_dow)
+        return {}
+
+    # Index by (zone_id, hour_of_day, day_of_week) for easy lookup
+    lookup = {}
+    for _, row in df.iterrows():
+        key = (int(row["pulocationid"]), int(row["hour_of_day"]), int(row["day_of_week"]))
+        lookup[key] = float(row["avg_demand"])
+
+    def get_avg(zone_id, h, dow):
+        return lookup.get((zone_id, h % 24, dow % 7), 0.0)
+
+    fallbacks = {}
+    for zone_id in zone_ids:
+        rolling_hours = [
+            get_avg(zone_id, (hour - 1) % 24, pg_dow),
+            get_avg(zone_id, (hour - 2) % 24, pg_dow),
+            get_avg(zone_id, (hour - 3) % 24, pg_dow),
+        ]
+        non_zero = [v for v in rolling_hours if v > 0.0]
+
+        fallbacks[zone_id] = {
+            "lag_1":          get_avg(zone_id, (hour - 1) % 24, pg_dow),
+            "lag_2":          get_avg(zone_id, (hour - 2) % 24, pg_dow),
+            "lag_24":         get_avg(zone_id, hour,             prev_dow),
+            "rolling_mean_3h": sum(non_zero) / len(non_zero) if non_zero else 0.0,
+        }
+
+    logger.info("Historical lag fallbacks computed | zones=%s", len(fallbacks))
+    return fallbacks
 
 def apply_lag_features(rows, lag_map):
     enriched_rows = []
