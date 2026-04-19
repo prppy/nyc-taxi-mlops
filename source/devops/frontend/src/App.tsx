@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ControlPanel } from "./components/ControlPanel";
 import { DataDriftView } from "./components/DataDriftView";
 import { SidePanel } from "./components/SidePanel";
@@ -7,10 +7,7 @@ import { Tabs, type TabKey } from "./components/Tabs";
 import { ZoneMap } from "./components/ZoneMap";
 import { THEME } from "./constants/theme";
 import zoneShapesData from "./data/zone_shapes.json";
-import {
-  MOCK_fetchDataDrift,
-  MOCK_fetchDemandModelPrediction,
-} from "./services/MOCK_backend";
+import { fetchDataDrift, fetchDemandPrediction } from "./services/api";
 import type {
   FeatureStat,
   PredictionLog,
@@ -159,6 +156,26 @@ export default function App() {
     String(new Date().getHours()).padStart(2, "0"),
   );
   const [loading, setLoading] = useState(false);
+  const [driftLoading, setDriftLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== "drift") return;
+
+    const loadDrift = async () => {
+      setDriftLoading(true);
+
+      try {
+        const driftResponse = await fetchDataDrift();
+        setFeatureStats(driftResponse.featureStats);
+      } catch (error) {
+        console.error("Failed to load drift data", error);
+      } finally {
+        setDriftLoading(false);
+      }
+    };
+
+    loadDrift();
+  }, [activeTab]);
 
   // FUNCTIONS
   const onToggleZone = (zoneId: number) => {
@@ -170,16 +187,17 @@ export default function App() {
     );
   };
 
-  // TODO: REPLACE W ACTUAL
   const onPredict = async () => {
     if (selectedZoneIds.length === 0 || loading) return;
     setLoading(true);
+
     try {
       const timestamp = `${dateValue}T${hourValue}:00:00`;
-      const [predictionResponse, driftResponse] = await Promise.all([
-        MOCK_fetchDemandModelPrediction(selectedZoneIds, timestamp, zones),
-        MOCK_fetchDataDrift(timestamp),
-      ]);
+      const predictionResponse = await fetchDemandPrediction(
+        selectedZoneIds,
+        timestamp,
+      );
+
       const sortedPredictions = [...predictionResponse.predictions].sort(
         (a, b) => b.score - a.score,
       );
@@ -192,7 +210,6 @@ export default function App() {
       );
       setIncludedZoneIds(new Set(predictionResponse.includedZoneIds));
       setWeatherByZoneId(predictionResponse.weatherByZoneId);
-      setFeatureStats(driftResponse.featureStats);
       setLocked(true);
 
       if (topPrediction && topZone) {
@@ -253,6 +270,7 @@ export default function App() {
           <DataDriftView
             featureStats={featureStats}
             predictionLogs={predictionLogs}
+            driftLoading={driftLoading}
           />
         )}
       </main>

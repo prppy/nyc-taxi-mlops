@@ -10,11 +10,13 @@ import { THEME } from "../constants/theme";
 import { driftSeverity, driftSeverityColor } from "../services/driftDisplay";
 import type { FeatureStat, PredictionLog } from "../types";
 import { PredictionLogTable } from "./PredictionLogTable";
+
 // TYPES
 
 type Props = {
   featureStats: FeatureStat[];
   predictionLogs: PredictionLog[];
+  driftLoading: boolean;
 };
 
 // CONSTANTS — single source of truth via driftSeverity()
@@ -106,7 +108,11 @@ function HealthItem({ row }: { row: FeatureStat }) {
 
 // MAIN COMPONENT
 
-export function DataDriftView({ featureStats, predictionLogs }: Props) {
+export function DataDriftView({
+  featureStats,
+  predictionLogs,
+  driftLoading,
+}: Props) {
   const [driftExpanded, setDriftExpanded] = useState(false);
   const [healthExpanded, setHealthExpanded] = useState(false);
 
@@ -122,7 +128,6 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
   const highCount = featureStats.filter((r) => r.driftScore >= 0.55).length;
   const healthyCount = featureStats.filter((r) => r.driftScore < 0.3).length;
 
-  // use same thresholds as driftSeverity() //TODO: abstract out into constant
   const worstScore = criticalCount > 0 ? 0.8 : highCount > 0 ? 0.55 : avgDrift;
   const {
     fg: statusColor,
@@ -151,26 +156,32 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
         <StatCard
           label="Monitored Features"
           value={FEATURE_COLS.length}
-          sub={`${featureStats.length} with data`}
+          sub={driftLoading ? "loading feature coverage" : `${featureStats.length} with data`}
         />
         <StatCard
           label="Avg Drift Score"
-          value={avgDrift.toFixed(2)}
-          sub="across all features"
-          valueColor={driftSeverityColor(avgDrift)}
+          value={driftLoading ? "—" : avgDrift.toFixed(2)}
+          sub={driftLoading ? "loading drift summary" : "across all features"}
+          valueColor={driftLoading ? THEME.text : driftSeverityColor(avgDrift)}
         />
         <StatCard
           label="High-Drift Features"
-          value={highCount}
-          sub={`${criticalCount} critical`}
-          valueColor={highCount > 0 ? driftSeverityColor(0.55) : THEME.text}
+          value={driftLoading ? "—" : highCount}
+          sub={driftLoading ? "loading feature status" : `${criticalCount} critical`}
+          valueColor={
+            driftLoading
+              ? THEME.text
+              : highCount > 0
+                ? driftSeverityColor(0.55)
+                : THEME.text
+          }
         />
         <StatCard
           label="Overall Status"
-          value={statusLabel}
-          sub={`${healthyCount} healthy features`}
-          valueColor={statusColor}
-          bgColor={statusBg}
+          value={driftLoading ? "Loading…" : statusLabel}
+          sub={driftLoading ? "retrieving latest drift results" : `${healthyCount} healthy features`}
+          valueColor={driftLoading ? THEME.text : statusColor}
+          bgColor={driftLoading ? undefined : statusBg}
         />
       </div>
 
@@ -189,9 +200,13 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
             ))}
           </div>
 
-          {featureStats.length === 0 ? (
+          {driftLoading ? (
             <p style={{ color: THEME.mutedText, fontSize: "0.9rem" }}>
-              No feature statistics available yet.
+              Loading feature drift data...
+            </p>
+          ) : featureStats.length === 0 ? (
+            <p style={{ color: THEME.mutedText, fontSize: "0.9rem" }}>
+              No feature drift data available.
             </p>
           ) : (
             <>
@@ -200,7 +215,9 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
                   .map((f) => statsMap.get(f))
                   .filter((r): r is FeatureStat => r !== undefined)
                   .sort((a, b) => b.driftScore - a.driftScore);
+
                 if (groupRows.length === 0) return null;
+
                 return (
                   <div key={groupName} style={STYLES.groupWrap}>
                     <div style={STYLES.groupHeader}>{groupName}</div>
@@ -210,6 +227,7 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
                   </div>
                 );
               })}
+
               {hiddenGroupCount > 0 && (
                 <button
                   style={STYLES.showMoreBtn}
@@ -227,9 +245,14 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
         {/* right: health ranking */}
         <section style={GLOBAL_STYLES.panel}>
           <div style={GLOBAL_STYLES.sectionLabel}>Feature Health Ranking</div>
-          {featureStats.length === 0 ? (
+
+          {driftLoading ? (
             <p style={{ color: THEME.mutedText, fontSize: "0.88rem" }}>
-              No data yet.
+              Loading feature health ranking...
+            </p>
+          ) : featureStats.length === 0 ? (
+            <p style={{ color: THEME.mutedText, fontSize: "0.88rem" }}>
+              No feature health data available.
             </p>
           ) : (
             <>
@@ -253,7 +276,10 @@ export function DataDriftView({ featureStats, predictionLogs }: Props) {
         </section>
       </div>
 
-      <PredictionLogTable predictionLogs={predictionLogs} />
+      <PredictionLogTable
+        predictionLogs={predictionLogs}
+        driftLoading={driftLoading}
+      />
     </div>
   );
 }

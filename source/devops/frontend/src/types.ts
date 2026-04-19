@@ -42,7 +42,30 @@ export type FeatureStat = {
   currentMean: number;
   trainingMean: number;
   driftScore: number;
+  severity: string;
+  featureType: string;
 };
+
+export type DriftSummary = {
+  dataMonth: string;
+  avgDriftScore: number;
+  highDriftCount: number;
+  criticalCount: number;
+  overallStatus: string;
+  trainingTriggered: boolean;
+  labelDrift: {
+    driftScore: number | null;
+    severity: string | null;
+    shouldAlert: boolean | null;
+  };
+  modelDrift: {
+    rmseDegradationRatio: number | null;
+    severity: string | null;
+    shouldAlert: boolean | null;
+  };
+};
+
 export type DataDriftResponse = {
   featureStats: FeatureStat[];
+  summary: DriftSummary | null;
 };

@@ -351,8 +351,9 @@ def load_fact_sample(period: str) -> pd.DataFrame:
 
     sample_query = text(f"""
         SELECT {cols}
-        FROM fact_trips_pickup TABLESAMPLE SYSTEM({TABLESAMPLE_PCT})
+        FROM fact_trips_pickup
         WHERE DATE_TRUNC('month', hour_ts) = DATE_TRUNC('month', CAST(:period_date AS TIMESTAMP))
+        AND random() < {TABLESAMPLE_PCT / 100}
         LIMIT {SAMPLE_ROW_LIMIT}
     """)
 
