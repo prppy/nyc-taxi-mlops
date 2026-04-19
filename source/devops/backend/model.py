@@ -7,7 +7,6 @@ import logging
 logger = logging.getLogger(__name__)
 REGISTERED_MODEL_NAME = "nyc-taxi-demand-forecaster"
 
-
 FEATURE_COLUMNS = [
     "pulocationid",
     "hour",
@@ -42,6 +41,10 @@ FEATURE_COLUMNS = [
     "rolling_mean_3h",
 ]
 
+DEMAND_SCORE_P10 = 23.0
+DEMAND_SCORE_P90 = 196.0
+
+
 def get_spark():
     print("STEP 1: entering get_spark()", flush=True)
 
@@ -73,10 +76,7 @@ def load_prod_model():
             f"Could not find Production alias for model '{REGISTERED_MODEL_NAME}': {e}"
         )
 
-    model_uri = "models:/{}/{}".format(
-        REGISTERED_MODEL_NAME,
-        prod_version.version,
-    )
+    model_uri = f"models:/{REGISTERED_MODEL_NAME}/{prod_version.version}"
     print(f"STEP 6: model_uri={model_uri}", flush=True)
 
     try:
@@ -91,6 +91,15 @@ def load_prod_model():
     return model
 
 
+def demand_to_score(predicted_demand: float, p10: float, p90: float) -> float:
+    if p90 <= p10:
+        return 0.0
+
+    normalized = (predicted_demand - p10) / (p90 - p10)
+    clipped = min(1.0, max(0.0, normalized))
+    return round(clipped, 4)
+
+
 def run_model_inference(feature_df):
     print("STEP 8: entering run_model_inference()", flush=True)
 
@@ -102,7 +111,7 @@ def run_model_inference(feature_df):
 
     spark = get_spark()
     model = load_prod_model()
-    
+
     assembler = VectorAssembler(
         inputCols=FEATURE_COLUMNS,
         outputCol="features",
@@ -119,27 +128,35 @@ def run_model_inference(feature_df):
         df = df.drop(columns=["source"])
         print("STEP 12: dropped source column", flush=True)
 
+    missing_cols = [col for col in FEATURE_COLUMNS if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required feature columns for inference: {missing_cols}")
+
     print("STEP 13: creating spark dataframe", flush=True)
     spark_df = spark.createDataFrame(df)
 
-    print("STEP 14: running model.transform()", flush=True)
+    print("STEP 14: assembling features", flush=True)
     model_input = assembler.transform(spark_df)
+
+    print("STEP 15: running model.transform()", flush=True)
     pred_df = model.transform(model_input)
 
-    print("STEP 15: converting predictions to pandas", flush=True)
+    print("STEP 16: converting predictions to pandas", flush=True)
     pred_pdf = pred_df.select("pulocationid", "prediction").toPandas()
 
-    print(f"STEP 16: got {len(pred_pdf)} prediction rows", flush=True)
+    print(f"STEP 17: got {len(pred_pdf)} prediction rows", flush=True)
 
-    source_by_zone = {}
-    for zone_id, source in zip(zone_ids, sources):
-        source_by_zone[zone_id] = source
+    source_by_zone = dict(zip(zone_ids, sources))
 
     results = []
     for _, row in pred_pdf.iterrows():
         zone_id = int(row["pulocationid"])
         predicted_demand = float(row["prediction"])
-        score = demand_to_score(predicted_demand)
+        score = demand_to_score(
+            predicted_demand,
+            p10=DEMAND_SCORE_P10,
+            p90=DEMAND_SCORE_P90,
+        )
 
         results.append({
             "zoneId": zone_id,
@@ -148,10 +165,6 @@ def run_model_inference(feature_df):
             "source": source_by_zone.get(zone_id, "nearby"),
         })
 
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
-    print(f"STEP 17: returning {len(results)} results", flush=True)
+    results.sort(key=lambda x: x["score"], reverse=True)
+    print(f"STEP 18: returning {len(results)} results", flush=True)
     return results
-
-def demand_to_score(predicted_demand):
-    raw = predicted_demand / 130
-    return min(1, max(0, round(raw, 4)))
