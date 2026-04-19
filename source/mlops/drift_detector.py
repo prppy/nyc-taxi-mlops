@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, avg, stddev, expr
+from pyspark.sql.functions import col, abs as spark_abs, avg, stddev, expr
 from pyspark.sql.types import NumericType
 from pyspark.storagelevel import StorageLevel
 from pyspark.ml.feature import VectorAssembler
@@ -277,8 +277,8 @@ def get_feature_type(feature):
 def smape_spark(pred_df):
     df = pred_df.withColumn(
         "smape_term",
-        2 * abs(col("prediction") - col("label")) /
-        (abs(col("label")) + abs(col("prediction")) + expr("1e-8"))
+        2.0 * spark_abs(col("prediction") - col("label")) /
+        (spark_abs(col("label")) + spark_abs(col("prediction")) + expr("1e-8"))
     )
     return float(df.agg(avg("smape_term").alias("smape")).collect()[0]["smape"])
 
