@@ -148,6 +148,7 @@ services:
       PYTHONPATH: /app
     volumes:
       - .:/app
+      - ./source/mlops/mlruns:/mlflow/artifacts
     ports:
       - "5002:5000"
     command: python source/devops/backend/app.py
