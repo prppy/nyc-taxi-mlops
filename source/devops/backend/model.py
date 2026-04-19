@@ -1,11 +1,46 @@
 import mlflow
 from mlflow.tracking import MlflowClient
+from pyspark.ml.feature import VectorAssembler
 from pyspark.sql import SparkSession
 import logging
 
 logger = logging.getLogger(__name__)
 REGISTERED_MODEL_NAME = "nyc-taxi-demand-forecaster"
 
+
+FEATURE_COLUMNS = [
+    "pulocationid",
+    "hour",
+    "day_of_week",
+    "month",
+    "is_weekend",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    "borough_manhattan",
+    "borough_brooklyn",
+    "borough_queens",
+    "borough_bronx",
+    "borough_staten island",
+    "borough_ewr",
+    "borough_nan",
+    "service_zone_Yellow_Zone",
+    "service_zone_Boro_Zone",
+    "service_zone_Airports",
+    "service_zone_EWR",
+    "service_zone_nan",
+    "temperature_mean",
+    "precipitation_sum",
+    "wind_speed_max",
+    "is_rainy",
+    "is_heavy_rain",
+    "is_hot",
+    "demand_lag_1",
+    "demand_lag_2",
+    "demand_lag_24",
+    "rolling_mean_3h",
+]
 
 def get_spark():
     print("STEP 1: entering get_spark()", flush=True)
@@ -67,6 +102,12 @@ def run_model_inference(feature_df):
 
     spark = get_spark()
     model = load_prod_model()
+    
+    assembler = VectorAssembler(
+        inputCols=FEATURE_COLUMNS,
+        outputCol="features",
+        handleInvalid="keep",
+    )
 
     df = feature_df.copy()
     print(f"STEP 11: copied dataframe shape={df.shape}", flush=True)
@@ -82,7 +123,8 @@ def run_model_inference(feature_df):
     spark_df = spark.createDataFrame(df)
 
     print("STEP 14: running model.transform()", flush=True)
-    pred_df = model.transform(spark_df)
+    model_input = assembler.transform(spark_df)
+    pred_df = model.transform(model_input)
 
     print("STEP 15: converting predictions to pandas", flush=True)
     pred_pdf = pred_df.select("pulocationid", "prediction").toPandas()
