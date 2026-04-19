@@ -161,7 +161,7 @@ function Tooltip({
       {predictionsById.get(hoveredZone.id) && (
         <>
           <div style={STYLES.tooltipDivider} />
-          <div style={STYLES.tooltipScore}>
+          {/* <div style={STYLES.tooltipScore}>
             <span>Demand Score</span>
             <strong
               style={{
@@ -172,7 +172,7 @@ function Tooltip({
             >
               {formatDemandScore(predictionsById.get(hoveredZone.id)!.score)}
             </strong>
-          </div>
+          </div> */}
           <div style={{ ...STYLES.tooltipScore, marginTop: 4 }}>
             <span>Predicted Rides</span>
             <strong>
