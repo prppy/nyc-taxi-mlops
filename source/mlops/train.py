@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 from dotenv import load_dotenv
 
 import mlflow
@@ -323,8 +324,14 @@ def main(start_date: str = None, end_date: str = None):
             mlflow.spark.log_model(best_model, artifact_path="model")
 
         print("\n=== SAVING FINAL MODEL ===")
-        best_model.write().overwrite().save("final_model_spark")
-        print("Best Spark model saved to final_model_spark")
+        model_path = "/opt/airflow/source/mlops/final_model_spark"
+
+        # remove existing folder first to avoid overwrite/path issues
+        if os.path.exists(model_path):
+            shutil.rmtree(model_path)
+
+        best_model.write().overwrite().save(model_path)
+        print(f"Best Spark model saved to {model_path}")
         output = {
             "best_run_id": final_run.info.run_id,
             "best_model_name": best_model_name,
