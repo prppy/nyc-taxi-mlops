@@ -92,6 +92,7 @@ def get_drift_history():
     Returns drift summary for all available months, sorted chronologically.
     Useful for the frontend to show a timeline of drift over time.
     """
+    engine = get_engine()
     with engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT

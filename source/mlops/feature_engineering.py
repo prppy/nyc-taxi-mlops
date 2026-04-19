@@ -1,5 +1,6 @@
 import os
 import re
+import psycopg2
 from dotenv import load_dotenv
 from pyspark.sql import SparkSession, Window
 from pyspark.sql.functions import (
@@ -54,6 +55,28 @@ def get_db_config():
         "db_url": db_url,
         "db_properties": db_properties,
     }
+
+def delete_existing_feature_window(start_date, end_date):
+    db = get_db_config()
+
+    conn = psycopg2.connect(
+        host=db["host"],
+        port=db["port"],
+        dbname=db["db"],
+        user=db["user"],
+        password=db["password"],
+    )
+    conn.autocommit = True
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM pickup_features
+                WHERE hour_ts >= %s
+                  AND hour_ts < (%s::date + INTERVAL '1 day')
+            """, (start_date, end_date))
+    finally:
+        conn.close()
 
 # LOAD DATA
 def load_fact(spark, db_url, db_properties, start_date, end_date):
@@ -290,6 +313,8 @@ def main(start_date, end_date):
             *[c for c in df.columns if c.startswith("borough_")],
             *[c for c in df.columns if c.startswith("service_zone_")],
         )
+
+        delete_existing_feature_window(start_date, end_date)
 
         # WRITE TO POSTGRES
         df.coalesce(2).write \
