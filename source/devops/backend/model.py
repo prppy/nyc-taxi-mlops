@@ -154,8 +154,8 @@ def run_model_inference(feature_df):
         predicted_demand = float(row["prediction"])
         score = demand_to_score(
             predicted_demand,
-            p10=DEMAND_SCORE_P10,
-            p90=DEMAND_SCORE_P90,
+            p10=DEMAND_SCORE_P20,
+            p90=DEMAND_SCORE_P80,
         )
 
         results.append({
