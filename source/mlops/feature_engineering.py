@@ -1,5 +1,4 @@
 import os
-import re
 import psycopg2
 from dotenv import load_dotenv
 from pyspark.sql import SparkSession, Window
@@ -7,6 +6,7 @@ from pyspark.sql.functions import (
     col, hour, dayofweek, month, to_date,
     sin, cos, lag, avg, lower, trim
 )
+from urllib.parse import urlparse, parse_qs
 
 # CONFIG
 DEV_MODE = False  # Set to False for full run, True for quick dev iterations 
@@ -33,25 +33,29 @@ def get_db_config():
     if not database_url:
         raise ValueError("DATABASE_URL not found in .env")
 
-    match = re.match(r"postgresql://(.*):(.*)@(.*):(.*)/(.*)", database_url)
-    if not match:
-        raise ValueError("Invalid DATABASE_URL format")
+    parsed = urlparse(database_url)
 
-    user, password, host, port, db = match.groups()
+    db_name = parsed.path.lstrip("/")
+    query = parse_qs(parsed.query)
+    sslmode = query.get("sslmode", [None])[0]
 
-    db_url = f"jdbc:postgresql://{host}:{port}/{db}"
+    db_url = f"jdbc:postgresql://{parsed.hostname}:{parsed.port}/{db_name}"
+    if sslmode:
+        db_url += f"?sslmode={sslmode}"
+
     db_properties = {
-        "user": user,
-        "password": password,
+        "user": parsed.username,
+        "password": parsed.password,
         "driver": "org.postgresql.Driver",
     }
 
     return {
-        "user": user,
-        "password": password,
-        "host": host,
-        "port": port,
-        "db": db,
+        "user": parsed.username,
+        "password": parsed.password,
+        "host": parsed.hostname,
+        "port": parsed.port,
+        "db": db_name,
+        "sslmode": sslmode,
         "db_url": db_url,
         "db_properties": db_properties,
     }
@@ -65,6 +69,7 @@ def delete_existing_feature_window(start_date, end_date):
         dbname=db["db"],
         user=db["user"],
         password=db["password"],
+        sslmode=db.get("sslmode", "require"),
     )
     conn.autocommit = True
 
