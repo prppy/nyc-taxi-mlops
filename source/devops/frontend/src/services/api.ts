@@ -9,11 +9,14 @@ export async function fetchDemandPrediction(
   selectedZoneIds: number[],
   timestamp: string,
 ): Promise<DemandModelPredictionResponse> {
-  const response = await fetch(`${API_BASE_URL}/predict`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ selectedZoneIds, timestamp }),
+  const params = new URLSearchParams({
+    zone_ids: selectedZoneIds.join(","),
+    timestamp,
   });
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/predict?${params.toString()}`,
+  );
 
   if (!response.ok) {
     throw new Error(`Prediction request failed: ${response.status}`);
