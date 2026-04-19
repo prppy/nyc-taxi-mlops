@@ -50,7 +50,7 @@ Run from repo root:
 2. Run the generator inside that image:
    - `docker run --rm -v "$PWD":/app -w /app nyc-taxi-devops python source/devops/backend/build_zone_shapes.py`
 
-### Devops (testing)
+# Devops (testing)
 
 Run all tests locally                                                               
 - pytest tests/ -v          # Should see 43 passed                                         
