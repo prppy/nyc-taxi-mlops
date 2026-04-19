@@ -15,6 +15,7 @@ import type { PredictionLog } from "../types";
 
 type Props = {
   predictionLogs: PredictionLog[];
+  driftLoading: boolean;
 };
 
 type PredictionLogRow = {
@@ -52,14 +53,14 @@ function mapLogsToRows(logs: PredictionLog[]): PredictionLogRow[] {
   });
 }
 
-export function PredictionLogTable({ predictionLogs }: Props) {
+export function PredictionLogTable({ predictionLogs, driftLoading }: Props) {
   const rows = mapLogsToRows(predictionLogs);
 
   return (
     <section style={GLOBAL_STYLES.panel}>
       <div style={GLOBAL_STYLES.sectionLabel}>
         Prediction Log
-        {rows.length > 0 && ` · ${rows.length} entries`}
+        {!driftLoading && rows.length > 0 && ` · ${rows.length} entries`}
       </div>
 
       <TableContainer sx={STYLES.tableWrap}>
@@ -81,7 +82,16 @@ export function PredictionLogTable({ predictionLogs }: Props) {
           </TableHead>
 
           <TableBody>
-            {rows.length === 0 ? (
+            {driftLoading ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  sx={{ ...STYLES.td, ...STYLES.emptyRow }}
+                >
+                  Loading recent prediction activity...
+                </TableCell>
+              </TableRow>
+            ) : rows.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={5}
